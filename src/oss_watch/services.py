@@ -1,4 +1,4 @@
-"""集中创建工具依赖，确保 CLI 与 MCP 使用同一个审批门和状态文件。"""
+"""集中创建工具依赖，确保 CLI 与 MCP 使用同一个审批门和事实库。"""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -25,7 +25,7 @@ class Services:
 
 def create_services(settings: Settings | None = None) -> Services:
     settings = settings or load_settings()
-    state = StateStore(settings.state_path)
+    state = StateStore(settings.state_path, settings)
     return Services(
         settings=settings,
         repositories=RepositoryReader(settings),

@@ -95,8 +95,9 @@ class CompleteLoopTests(unittest.TestCase):
             self.assertEqual(self.inbox.run(once=True)["status"], "blocked")
             self.assertEqual(launch.call_count, 1)
         self.assertEqual(self.store.load()["last_conclusion"]["event_id"], self.event["event_id"])
-        self.assertFalse(Path(first["path"]).exists())
-        self.assertEqual(len(self.inbox.files()), 1)
+        self.assertEqual(Path(first["database"]), self.settings.state_path)
+        self.assertNotIn(self.event["event_id"], self.inbox.inspect()["queued_events"])
+        self.assertEqual(len(self.inbox.events()), 1)
         self.gate.review(self.event["event_id"], "reject", "继续下一轮")
         with patch.object(self.inbox.pi, "launch", side_effect=self.complete):
             self.assertEqual(self.inbox.run(once=True)["event_id"], other["event_id"])
@@ -104,7 +105,7 @@ class CompleteLoopTests(unittest.TestCase):
         self.assertEqual(state["processed_events"][self.event["event_id"]]["status"], "rejected")
         self.assertEqual(state["pending_approval"]["event_id"], other["event_id"])
 
-    def test_waiter_wakes_on_file_and_dispatches_only_one_round(self):
+    def test_waiter_wakes_on_fact_and_dispatches_only_one_round(self):
         entered = threading.Event()
         errors, results = [], []
         original_sleep = __import__("time").sleep
@@ -132,7 +133,7 @@ class CompleteLoopTests(unittest.TestCase):
         with patch.object(self.inbox.pi, "launch", side_effect=ValueError("模型中断")):
             with self.assertRaisesRegex(ValueError, "模型中断"):
                 self.inbox.run(once=True)
-        self.assertEqual(len(self.inbox.files()), 1)
+        self.assertEqual(len(self.inbox.events()), 1)
         services = create_services(self.settings)
         with patch("oss_watch.cli.create_services", return_value=services), \
              patch("sys.argv", ["demo.py", "pi", "--resume-round", "--prepare-only"]), \
@@ -298,8 +299,9 @@ class CompleteLoopTests(unittest.TestCase):
                 load_settings()
 
     def test_invalid_head_file_stops_waiter_without_launch(self):
-        self.inbox.root.mkdir(parents=True)
-        (self.inbox.root / "broken.json").write_text("{", encoding="utf-8")
+        legacy = self.settings.state_path.parent / "inbox"
+        legacy.mkdir(parents=True)
+        (legacy / "broken.json").write_text("{", encoding="utf-8")
         with patch.object(self.inbox.pi, "launch") as launch:
             with self.assertRaises(ValueError):
                 self.inbox.run(once=True)

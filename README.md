@@ -49,10 +49,10 @@ python demo.py watch
 屏幕会先显示：
 
 ```text
-本地值守已启动；等待事件文件，派一轮交互 Pi 后退出。Ctrl+C 停止等待。
+本地值守已启动；等待 SQLite 队列事件，派一轮交互 Pi 后退出。Ctrl+C 停止等待。
 ```
 
-此时只是一个本机前台进程在扫描 `E:\code\oss-watch\var\readme-demo\inbox\`，不是常驻中台。没有事件时不会启动模型、不会访问 GitHub；先让它保持等待，再去终端 B 投递。
+此时只是一个本机前台进程在扫描 `E:\code\oss-watch\var\readme-demo\oss-watch.sqlite` 中的队列，不是常驻中台。没有事件时不会启动模型、不会访问 GitHub；先让它保持等待，再去终端 B 投递。
 
 ### 3. 终端 B：投递模拟 Issue
 
@@ -60,13 +60,13 @@ python demo.py watch
 python demo.py enqueue fixtures/issue-menu-overflow.json
 ```
 
-终端 B 返回 `status: queued`、事件 ID 和收件文件路径。命令校验事件后，通过临时文件原子写入：
+终端 B 返回 `status: queued`、`event_id` 和 `database`（数据库路径），不再返回收件文件 `path`。命令校验事件后，在一个 SQLite 事务中追加入队事实：
 
 ```text
-var/readme-demo/inbox/demo-issue-menu-overflow-20261113.json
+var/readme-demo/oss-watch.sqlite
 ```
 
-**`enqueue` 不会自动启动或唤醒一个已经退出的 `watch`**，它只投递文件。这次终端 A 已在扫描，所以会发现文件、取队首并拉起一轮可交互 Pi。
+**`enqueue` 不会自动启动或唤醒一个已经退出的 `watch`**，它只把事件写入数据库。这次终端 A 已在扫描，所以会发现新事件、取队首并拉起一轮可交互 Pi。
 
 ### 4. 观察终端 A：Pi 读取、判断、写草稿
 
@@ -110,7 +110,7 @@ python demo.py approve demo-issue-menu-overflow-20261113 --note "先保留本地
 # python demo.py reject demo-issue-menu-overflow-20261113 --note "信息不足，暂不跟进"
 ```
 
-`event_id` 是必填参数，要与 `pending_approval.event_id` 一致，不能只运行 `python demo.py approve`。`approve` **不会再写一遍草稿**；这次只更新 `var/readme-demo/state.json` 中的人工决定及发送结果。默认 `delivery: not-sent`，补丁为 `patch_delivery: local-only`。拒绝会记录 `delivery_reason: 已拒绝，未发出`，原草稿仍保留。
+`event_id` 是必填参数，要与 `pending_approval.event_id` 一致，不能只运行 `python demo.py approve`。`approve` **不会再写一遍草稿**；这次只向 `var/readme-demo/oss-watch.sqlite` 追加人工决定及发送结果。默认 `delivery: not-sent`，补丁为 `patch_delivery: local-only`。拒绝会记录 `delivery_reason: 已拒绝，未发出`，原草稿仍保留。
 
 这是 `fixture: true` 的模拟事件，**即使误开评论发送开关，也不会向真实讨论区发评论**。补丁即使批准也永远只留在 oss-watch 本地，不会应用到被值守仓库，不会自动开修复 PR。
 
@@ -145,7 +145,7 @@ python demo.py watch --once
 python demo.py status
 ```
 
-这时 `watch` 会返回 `blocked` 并退出。`pending_approval.event_id` 仍是 `demo-pr-menu-position-20261113`，发版文件只出现在 `queued_files`，不会覆盖 PR 草稿。先阅读 PR 的产物并用它的事件 ID 拍板，再在终端 A 重新运行 `watch`，才会处理排队的发版事件。模拟 PR `100002` 和发版 `v0.3.0-rc.1` 同样不是线上事件或官方公告。
+这时 `watch` 会返回 `blocked` 并退出。`pending_approval.event_id` 仍是 `demo-pr-menu-position-20261113`，发版事件只出现在 `queued_events`（以及兼容字段 `queued_files`），不会覆盖 PR 草稿。先阅读 PR 的产物并用它的事件 ID 拍板，再在终端 A 重新运行 `watch`，才会处理排队的发版事件。模拟 PR `100002` 和发版 `v0.3.0-rc.1` 同样不是线上事件或官方公告。
 
 **另外两个入口怎么选？** `python demo.py pi` 会跳过收件箱，直接在当前终端拉起一轮 Pi，默认处理模拟发版；也能显式传入 Issue/PR 文件。`python demo.py demo` 是免模型的固定规则对照与回归，只接受发版事件，不是上面的智能演示。它们共享去重和审批状态，比较时请使用不同的状态目录。
 
@@ -157,7 +157,7 @@ python demo.py status
 
 ### 2. status 就是草稿吗？返回的就是结论吗？
 
-它是总览，包含活动轮次、待拍板记录、最近结论、已处理事件、最近 20 条审批和收件文件。它会带出结论，未完成轮次还可能显示 `active_drafts`，但要完整审阅本轮产物，请按 `pending_approval.artifacts` 打开 `conclusion.json`、`comment.md` 和 `patch.md`。
+它是总览，包含活动轮次、待拍板记录、最近结论、已处理事件、最近 20 条审批和排队事件。它会带出结论，未完成轮次还可能显示 `active_drafts`，但要完整审阅本轮产物，请按 `pending_approval.artifacts` 打开 `conclusion.json`、`comment.md` 和 `patch.md`。
 
 ### 3. 执行 approve 之后才会开始写草稿吗？
 
@@ -173,11 +173,11 @@ python demo.py status
 
 ### 6. 项目是不是还没有做持久化？「watch 不持久化」是什么意思？
 
-已经有本地持久化：`state.json` 保存状态和审批历史，`runs/` 保存提示词、结论和草稿，收件与归档也在磁盘上。「watch 不持久化」容易误导，更准确的说法是它不会作为服务一直运行：派一轮并完成提交后就退出，数据仍保留。
+已经有本地持久化：`oss-watch.sqlite` 用追加式事实日志保存事件、队列、判断与审批历史，`runs/` 保存提示词、结论和草稿。当前状态从日志推导，退出进程不会丢失。「watch 不持久化」容易误导，更准确的说法是它不会作为服务一直运行：派一轮并完成提交后就退出，数据仍保留。
 
-### 7. 投递器把事件放进 inbox，会自动唤醒 watch 吗？
+### 7. 投递器把事件放进 SQLite 收件箱，会自动唤醒 watch 吗？
 
-不会启动一个尚未运行的 `watch`。已经在等待的 `watch` 会扫描到文件并派一轮 Pi；没有等待器时，文件只留在收件箱，等你下一次运行 `watch`。
+不会启动一个尚未运行的 `watch`。已经在等待的 `watch` 会扫描到入队事实并派一轮 Pi；没有等待器时，事件只留在数据库队列，等你下一次运行 `watch`。
 
 ### 8. 「持久化」和「watch 正在跑」是一回事吗？
 
@@ -185,15 +185,15 @@ python demo.py status
 
 ### 9. 如果想更自动，是不是必须让 watch 一直开着？
 
-如果希望等待期间文件一到就处理，需要有 `watch` 正在跑；也可以投递后自己启动它。当前每次最多派一个新模型轮次，待拍板或未完成时会退出，不会一直循环替你处理和审批。自动重启、系统服务托管还没做，实际判断仍需要可交互的本机终端。
+如果希望等待期间事件一入队就处理，需要有 `watch` 正在跑；也可以投递后自己启动它。当前每次最多派一个新模型轮次，待拍板或未完成时会退出，不会一直循环替你处理和审批。自动重启、系统服务托管还没做，实际判断仍需要可交互的本机终端。
 
 ### 10. watch 是哪个程序实现的？
 
-是本项目的 Python CLI：`demo.py` 进入 `src/oss_watch/cli.py`，再调用 `src/oss_watch/inbox.py` 的 `EventInbox.run()`。默认每秒扫描一次本地文件，再由 `pi_judgment.py` 启动本机 Pi，不是 GitHub 或 Pi 自带的常驻服务。
+是本项目的 Python CLI：`demo.py` 进入 `src/oss_watch/cli.py`，再调用 `src/oss_watch/inbox.py` 的 `EventInbox.run()`。默认每秒扫描一次 SQLite 队列，再由 `pi_judgment.py` 启动本机 Pi，不是 GitHub 或 Pi 自带的常驻服务。
 
 ### 11. 什么东西替代了中台？为什么不引入中台？
 
-当前用本地收件箱、Python 等待器、JSON 状态和人工 CLI 拍板串起这条小闭环，模型判断交给本机 Pi。范围是本机维护建议，用这些就能保留事件、草稿和决定，少一套服务需要部署维护。Agent Autoloop 中台及跟进 Issue 配方没有接入，也没有在本项目中实现。
+当前用 SQLite 事实日志中的收件箱与状态、Python 等待器和人工 CLI 拍板串起这条小闭环，模型判断交给本机 Pi。范围是本机维护建议，用这些就能保留事件、草稿和决定，少一套服务需要部署维护。Agent Autoloop 中台及跟进 Issue 配方没有接入，也没有在本项目中实现。
 
 ### 12. 公网 Webhook 是什么？本项目有没有做？
 
@@ -205,7 +205,7 @@ python demo.py status
 
 ### 14. 本地收件箱在哪？
 
-默认是 `E:\code\oss-watch\var\inbox\`。本演示是 `E:\code\oss-watch\var\readme-demo\inbox\`，即 `$env:OSS_WATCH_VAR` 下面的 `inbox/`；`status` 的 `inbox` 字段会显示实际路径。
+收件箱与状态在同一个 SQLite 库中。默认是 `E:\code\oss-watch\var\oss-watch.sqlite`；本演示是 `E:\code\oss-watch\var\readme-demo\oss-watch.sqlite`，即 `$env:OSS_WATCH_VAR` 下的 `oss-watch.sqlite`。`status` 的 `database` 与兼容字段 `inbox` 都显示库路径，`queued_events` 列出事件 ID；`queued_files` 保留 `<event_id>.json` 名称方便旧脚本展示，但不代表磁盘上仍有收件文件。
 
 ### 15. 批准之后会不会改被值守仓库，或自动开修复 PR、自动发评论？
 
@@ -217,7 +217,7 @@ python demo.py status
 
 ### 17. 只有一个终端能不能演示？
 
-可以。先设置工作目录、虚拟环境和新状态目录，先 `enqueue`，再 `watch`；队列已有文件时会直接处理，退出后继续 `status` 和拍板。两个终端只是方便亲眼看到「正在等待 → 文件到达 → 拉起 Pi」。
+可以。先设置工作目录、虚拟环境和新状态目录，先 `enqueue`，再 `watch`；数据库队列已有事件时会直接处理，退出后继续 `status` 和拍板。两个终端只是方便亲眼看到「正在等待 → 事件入库 → 拉起 Pi」。
 
 ### 18. 同一事件再 enqueue 一次会怎样？
 
@@ -229,7 +229,7 @@ python demo.py status
 
 ### 20. 碰到 state.lock、state.pi.lock、state.watch.lock 怎么办？
 
-它们分别是短暂状态写锁、Pi 进程租约和等待器租约，用来拒绝并发操作。先检查是否有相关 CLI、Pi 或 `watch` 正在运行；正常运行时不要动锁。若异常退出留下锁，确认对应进程已经退出，再人工移走当前状态目录中对应的锁文件，保留 `state.json` 和产物，然后按状态接续或重新启动等待器。
+它们分别是短暂状态写锁、Pi 进程租约和等待器租约，用来拒绝并发操作。先检查是否有相关 CLI、Pi 或 `watch` 正在运行；正常运行时不要动锁。若异常退出留下锁，确认对应进程已经退出，再人工移走当前状态目录中对应的锁文件，保留 `oss-watch.sqlite`、可能存在的 `-wal` / `-shm` 文件和产物，然后按状态接续或重新启动等待器。
 
 ### 21. 打开发送开关后，模拟事件或发版适配会不会发出去？
 
@@ -247,13 +247,13 @@ python demo.py status
 
 不能。首次审批已经清除了待拍板记录，重复 `approve` 会被拒绝。当前还没有延后发送或自动重试命令；若确实准备发送真实评论，应在第一次审批前开启发送开关。出现 `unknown` 或遗留 `sending` 时先人工核对讨论区，不要盲目重发。
 
-### 25. 为什么文件已经入队却没有处理？
+### 25. 为什么事件已经入队却没有处理？
 
-先用同一状态目录运行 `status`：确认 `inbox` 和 `queued_files`，再看是否有阻塞轮次、等待器是否已经退出。队列按文件名排序，不按投递时间；坏 JSON 或无效队首文件会让等待器报错退出并保留文件，需要人工修正再启动。不要直接逐段写入正在被扫描的 `.json`。
+先用同一状态目录运行 `status`：确认 `database` 和 `queued_events`，再看是否有阻塞轮次、等待器是否已经退出。队列沿用旧版 `<event_id>.json` 名称的排序，不按投递时间。无效 JSON 或事件正文会在 `enqueue` 时被拒绝，不会写进队列；只通过 `enqueue` 投递，不要手工改数据库或继续往旧 `inbox/` 写文件。首次迁移遇到旧文件损坏或同 ID 正文冲突，也会报错并保留全部旧数据，需要人工核对后重试。
 
 ## 收件箱、状态与接续参考
 
-`enqueue` 用临时文件原子投递到 `<状态目录>/inbox/<event_id>.json`。自行编写投递器时，也应先写 `.tmp`，写完再原子改名为 `.json`。文件按文件名排序；成功完成一轮或识别为已处理后，移到 `inbox-archive/`。每次 `watch` 最多派一个新模型轮次；`--once` 只是让队列为空时立即退出，不会绕过审批或禁用模型：
+`enqueue` 校验本地事件 JSON 后，把原事件作为入队事实追加到 `<状态目录>/oss-watch.sqlite`。自行编写投递器也应调用 `enqueue`，不再写 `inbox/`。成功完成一轮或识别为已处理后，追加归档事实，从当前队列移除，原事件与历史仍保留在库中。每次 `watch` 最多派一个新模型轮次；`--once` 只是让队列为空时立即退出，不会绕过审批或禁用模型：
 
 ```powershell
 python demo.py watch --once
@@ -267,18 +267,33 @@ python demo.py pi --resume-round
 
 不传文件时，它读取状态保存的原事件；也可以显式提供相同的事件文件。接续使用原提示词和已有草稿。Pi 提交后，工具禁止改写该轮草稿；发送前再次核对评论内容摘要。状态写锁、Pi 租约和等待器租约拒绝并发启动；异常遗留锁的处理见常见问题。
 
-`state.json` 保留每个新轮次的原事件、草稿路径、冻结的评论摘要及审批/发送结果。旧版状态无需清空，缺少发送目标的旧轮次只能本地拍板。未设置 `OSS_WATCH_VAR` 时，状态在 `var/state.json`，产物在 `var/runs/`。需要备份时，只复制本项目的 `var/`，不必删除或移走原目录：
+**事实日志就是按时间追加发生过的事**：事件入队、开始判断、提交结论摘要与草稿路径、队列归档、人工批准/拒绝，以及可选发送的结果都会留下新记录。当前队列、`active_judgment`、`pending_approval`、`processed_events`、`reviews` 和 `last_conclusion` 每次都从这些记录推导，数据库是唯一状态来源；评论与补丁全文仍在 `runs/<event_id>/` 文件中，库里只记路径和评论 SHA-256 等核验信息。SQLite 使用 Python 标准库 `sqlite3` 和 WAL，无需额外服务或新依赖。
+
+| 命令 | 如何使用同一个事实库 |
+| --- | --- |
+| `enqueue` | 校验正文并追加入队事实；同 ID 同正文去重，正文冲突拒绝 |
+| `watch` | 扫描当前队列，认领一轮并记录开始判断；成功后追加归档事实 |
+| `pi` / `demo` | 直接处理事件；提交判断时事务写入结论摘要、产物路径与待拍板记录 |
+| `status` / MCP `get_pending_approval` | 从事实重建当前视图，不调用模型，也不替人拍板 |
+| `approve` / `reject` | 事务追加人工决定，解除待拍板；默认只留本地记录 |
+
+**旧数据会一次迁移**：某状态目录的数据库不存在或事实表为空时，首次打开会校验并导入旧 `state.json`、`inbox/*.json` 和 `inbox-archive/*.json`，保留待拍板、未完成判断、已处理记录、队列及审批历史。同 ID 正文冲突、无效事件或链接逃逸会使整个导入回滚；修正备份来源后可重试空库。导入成功后旧文件原样保留，程序将它们视为只读备份，不再读取或改写；此后不要编辑旧 JSON 来改变运行状态。缺少可核验发送目标的旧轮次仍只能本地拍板。
+
+未设置 `OSS_WATCH_VAR` 时，库在 `var/oss-watch.sqlite`，产物在 `var/runs/`；指定目录时二者都位于该目录内。**备份要同时复制数据库和 `runs/` 产物**。先停止此状态目录的 `watch`、Pi、MCP 及其他 CLI 进程，再复制整个状态目录；WAL 模式运行期间不能只复制主库，若还有 `oss-watch.sqlite-wal` / `oss-watch.sqlite-shm`，也一起保留，不要手动删除：
 
 ```powershell
+$stateDir = if ($env:OSS_WATCH_VAR) { $env:OSS_WATCH_VAR } else { Join-Path $PWD 'var' }
 $backup = Join-Path $env:TEMP ('oss-watch-var-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
-Copy-Item -LiteralPath .\var -Destination $backup -Recurse
+Copy-Item -LiteralPath $stateDir -Destination $backup -Recurse
 ```
+
+持久化与进程常驻是两回事：日志留在磁盘上，`watch` 仍只派一轮并退出；新事件不会自动启动已退出的等待器。
 
 本项目还没做公网 Webhook 接收端、内置定时轮询器或 Autoloop 中台。在线读取默认关闭，不启动公网监听、不要求暴露本机。
 
 ## 批准后可选发评论
 
-`approve` / `reject` **先更新本地 JSON**。未开启发送或无凭据时，结果为 `delivery: not-sent`，并注明“未发出”。拒绝、模拟事件、版本适配都不会发送；补丁始终为 `patch_delivery: local-only`。
+`approve` / `reject` **先在 SQLite 事务中追加本地拍板事实**。未开启发送或无凭据时，结果为 `delivery: not-sent`，并注明“未发出”。拒绝、模拟事件、版本适配都不会发送；补丁始终为 `patch_delivery: local-only`。
 
 只有准备发送**真实 Issue/PR** 的讨论区评论时，在拍板的本机终端显式设置开关，并使用本机已配置的 GitHub 凭据：
 
@@ -344,6 +359,6 @@ $piPackage = Join-Path (Split-Path (Get-Command pi).Source) 'node_modules/@earen
 node tests/pi_smoke.mjs $piPackage
 ```
 
-单元测试使用临时目标源码副本，覆盖规则回归、Issue/PR 快照与证据提交、草稿冻结、收件文件唤醒、排队阻塞、异常接续、去重及冲突、并发租约、先审批后发送、开关/凭据缺失、模拟与版本适配禁止发送、正文篡改、发送不确定时不重试；逐项检查目标副本内容未变化。发送测试用替身，不向真实讨论区发评论。
+单元测试使用临时目标源码副本，覆盖规则回归、Issue/PR 快照与证据提交、草稿冻结、队列事实唤醒、排队阻塞、异常接续、去重及冲突、并发租约、先审批后发送、开关/凭据缺失、模拟与版本适配禁止发送、正文篡改、发送不确定时不重试，以及事实查询与重建、只追加约束、旧状态/队列/归档迁移、冲突回滚和数据库锁冲突。闭环与事实日志测试逐项检查目标副本内容未变化。发送测试用替身，不向真实讨论区发评论。
 
 MCP 冒烟真实启动 stdio，在隔离状态目录调用工具并走到本地审批；Pi SDK 探针验证项目配置、工具限制和退出扩展，不调用模型、不改全局配置。它们与单元测试**不等于真实模型判断验收**。完整交互验收请在本机终端按「一次完整演示」执行，观察 Pi 的真实读取、草稿和 `pending_approval`，再人工核对结论。运行产物、草稿与状态都在忽略的 `var/` 中。

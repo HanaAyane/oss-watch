@@ -85,12 +85,14 @@ def load_settings() -> Settings:
     for repository in repositories.values():
         if var_root.is_relative_to(repository.root) or repository.root.is_relative_to(var_root):
             raise ValueError("本地状态目录不能与被值守仓库重叠")
-    for path in (var_root / "state.json", var_root / "runs", var_root / "inbox", var_root / "inbox-archive"):
+    local_names = ("oss-watch.sqlite", "oss-watch.sqlite-wal", "oss-watch.sqlite-shm",
+                   "state.json", "runs", "inbox", "inbox-archive")
+    for path in (var_root / name for name in local_names):
         if not path.resolve().is_relative_to(var_root):
             raise ValueError("本地状态、草稿和收件箱不得通过链接逃逸")
     return Settings(
         project_root=PROJECT_ROOT,
-        state_path=var_root / "state.json",
+        state_path=var_root / "oss-watch.sqlite",
         runs_root=var_root / "runs",
         fixtures_root=PROJECT_ROOT / "fixtures",
         repositories=repositories,

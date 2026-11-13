@@ -14,7 +14,7 @@ class VersionWatchWorkflow:
     def __init__(self, settings: Settings):
         self.settings = settings
         self.reader = RepositoryReader(settings)
-        self.store = StateStore(settings.state_path)
+        self.store = StateStore(settings.state_path, settings)
 
     def load_event(self, event_path: str) -> dict[str, Any]:
         from .events import load_event
@@ -38,6 +38,7 @@ class VersionWatchWorkflow:
 
     def _run(self, event: dict[str, Any]) -> dict[str, Any]:
         state = self.store.load()
+        self.store.check_event(state, event)
         event_id = event["event_id"]
         if event_id in state["processed_events"]:
             original = state["processed_events"][event_id].get("event")

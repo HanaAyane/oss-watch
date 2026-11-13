@@ -2,7 +2,7 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { resolve, join } from "node:path";
+import { resolve, join, relative, isAbsolute } from "node:path";
 import { pathToFileURL } from "node:url";
 
 if (!process.argv[2]) throw new Error("请传入本机 @earendil-works/pi-coding-agent 包目录");
@@ -10,6 +10,11 @@ process.env.PI_OFFLINE = "1";
 const sdk = await import(pathToFileURL(resolve(process.argv[2], "dist/index.js")).href);
 const agentDir = await mkdtemp(join(tmpdir(), "oss-watch-pi-smoke-"));
 const cwd = process.cwd();
+// MCP 探针也必须使用独立状态库，绝不首次打开或迁移默认 var。
+const stateRoot = await mkdtemp(join(cwd, ".test-pi-state-"));
+process.env.OSS_WATCH_VAR = stateRoot;
+process.env.OSS_WATCH_GITHUB = "0";
+process.env.OSS_WATCH_SEND_COMMENTS = "0";
 const settingsManager = sdk.SettingsManager.create(cwd, agentDir);
 const loader = new sdk.DefaultResourceLoader({
   cwd, agentDir, settingsManager, noExtensions: true, noSkills: true,
@@ -54,4 +59,7 @@ try {
   if (session) await session.extensionRunner.emit({ type: "session_shutdown", reason: "quit" });
   session?.dispose();
   await rm(agentDir, { recursive: true, force: true });
+  const stateRelative = relative(cwd, stateRoot);
+  assert(stateRelative && !stateRelative.startsWith("..") && !isAbsolute(stateRelative));
+  await rm(stateRoot, { recursive: true, force: true });
 }
