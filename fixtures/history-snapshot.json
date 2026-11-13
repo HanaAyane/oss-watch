@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "fixture": true,
+  "description": "开发演示时通过只读 GitHub API 获取的公开历史摘要，不代表实时状态。",
+  "repository": "dsh-reasoning-effort",
+  "captured_at": "2026-11-13",
+  "issues": [
+    {
+      "number": 8,
+      "state": "open",
+      "title": "移动端/手机端弹层超出界面截断问题（附原因诊断与修复建议）",
+      "url": "https://github.com/HanaAyane/dsh-reasoning-effort/issues/8",
+      "excerpt": "窄视口下模型与推理强度弹层左侧溢出；历史建议包含视口边界检测。当前代码另有 positionNativeModelMenu 处理原生菜单定位。"
+    }
+  ],
+  "pull_requests": [
+    {
+      "number": 9,
+      "state": "open",
+      "title": "feat: add 8 model family chibi runner themes, dual-mode radiation effects & smart model detection",
+      "url": "https://github.com/HanaAyane/dsh-reasoning-effort/pull/9",
+      "excerpt": "多模型家族主题贡献；本次菜单结构适配不应覆盖或回退这些外观功能。"
+    }
+  ]
+}
