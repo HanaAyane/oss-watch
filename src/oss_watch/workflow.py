@@ -2,10 +2,9 @@
 from __future__ import annotations
 
 import json
-from pathlib import Path
 from typing import Any
 
-from .config import Settings, repository_path, safe_event_id
+from .config import Settings, repository_path
 from .history import HistoryReader
 from .repository import RepositoryReader
 from .state import StateStore, now_iso
@@ -18,18 +17,8 @@ class VersionWatchWorkflow:
         self.store = StateStore(settings.state_path)
 
     def load_event(self, event_path: str) -> dict[str, Any]:
-        path = Path(event_path).expanduser().resolve()
-        if not path.is_file():
-            raise ValueError(f"事件文件不存在：{path}")
-        event = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(event, dict):
-            raise ValueError("事件必须是 JSON 对象")
-        safe_event_id(event.get("event_id", ""))
-        if event.get("type") != "release.published":
-            raise ValueError("第一期仅处理 release.published 事件")
-        if not isinstance(event.get("release"), dict) or not isinstance(event.get("repository"), str):
-            raise ValueError("事件缺少 release 或 repository")
-        return event
+        from .events import load_event
+        return load_event(event_path, self.settings)
 
     def _text(self, repo: str, path: str) -> str:
         return repository_path(self.settings.repositories[repo], path).read_text(encoding="utf-8")
@@ -40,6 +29,10 @@ class VersionWatchWorkflow:
             raise ValueError(f"仓库源码与本次适配检查的前提不符：{message}")
 
     def run(self, event: dict[str, Any]) -> dict[str, Any]:
+        from .events import validate_event
+        validate_event(event, self.settings)
+        if event["type"] != "release.published":
+            raise ValueError("固定规则对照仅支持发版；Issue/PR 请使用交互 Pi")
         with self.store.locked():
             return self._run(event)
 
@@ -47,6 +40,9 @@ class VersionWatchWorkflow:
         state = self.store.load()
         event_id = event["event_id"]
         if event_id in state["processed_events"]:
+            original = state["processed_events"][event_id].get("event")
+            if original is not None and original != event:
+                raise ValueError("相同事件 ID 的正文发生变化，拒绝重放")
             return {"status": "already_processed", "event_id": event_id, "record": state["processed_events"][event_id], "pending_approval": state.get("pending_approval"), "message": "事件已处理，未覆盖原草稿。请查看现有待拍板产物。"}
         if state.get("pending_approval") is not None:
             pending_id = state["pending_approval"]["event_id"]
@@ -102,7 +98,7 @@ class VersionWatchWorkflow:
             "confidence": "高（针对静态结构适配）；新版运行时兼容性未验证",
             "reasons": reasons,
             "evidence": evidence,
-            "validation_required": ["在新版实际菜单中确认 models / effort / session 窗格与 Agent Teams 开关均保留", "运行原仓库 pnpm run check", "在窄视口下回归菜单定位", "人工审查草稿后再决定是否在目标仓库建立分支"],
+            "validation_required": ["人工另行验证新版菜单中的 models / effort / session 窗格与 Agent Teams 开关", "人工在独立测试环境验证兼容性", "窄视口定位需人工验证；值守不操作目标仓库"],
             "generated_at": now_iso(),
             "simulation": event.get("fixture") is True,
         }

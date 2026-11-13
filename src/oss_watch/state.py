@@ -1,6 +1,7 @@
 """小型 JSON 状态库：原子写入，并保留审批历史。"""
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from contextlib import contextmanager
@@ -67,7 +68,10 @@ class StateStore:
         active = state.get("active_judgment")
         if active is not None and active["event"]["event_id"] != event_id:
             raise ValueError("另一轮 Pi 判断尚未结束")
-        record = {"event_id": event_id, "type": event["type"], "status": "pending_approval", "processed_at": now_iso(), "artifacts": artifacts}
+        comment = Path(artifacts["comment"]).read_bytes()
+        record = {"event_id": event_id, "type": event["type"], "event": event,
+                  "comment_sha256": hashlib.sha256(comment).hexdigest(),
+                  "status": "pending_approval", "processed_at": now_iso(), "artifacts": artifacts}
         state["processed_events"][event_id] = record
         state["last_conclusion"] = {"event_id": event_id, **conclusion}
         state["pending_approval"] = {**record, "conclusion": conclusion}
@@ -86,9 +90,13 @@ class StateStore:
         if pending is None or pending.get("event_id") != event_id:
             raise ValueError("该事件当前不在待拍板状态")
         status = "approved" if decision == "approve" else "rejected"
-        review = {"event_id": event_id, "decision": decision, "note": note.strip(), "reviewed_at": now_iso(), "delivery": "not-sent"}
+        review = {"event_id": event_id, "decision": decision, "note": note.strip(), "reviewed_at": now_iso(),
+                  "delivery": "not-sent", "delivery_reason": "仅记录本地决定，未发出",
+                  "event": pending.get("event"), "artifacts": dict(pending["artifacts"]),
+                  "github_repository": pending.get("conclusion", {}).get("github_repository"),
+                  "comment_sha256": pending.get("comment_sha256"), "patch_delivery": "local-only"}
         state["reviews"].append(review)
         state["processed_events"][event_id]["status"] = status
         state["pending_approval"] = None
         self.save(state)
-        return {**review, "message": "仅记录本地审批，第一期没有对外发送能力。"}
+        return {**review, "message": "已记录本地决定，未发出；补丁永远只保留本地草稿。"}

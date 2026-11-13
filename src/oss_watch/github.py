@@ -6,6 +6,7 @@ import subprocess
 from typing import Any
 
 from .config import Repository, Settings
+from .state import StateStore
 
 
 class GitHubReader:
@@ -46,10 +47,30 @@ class GitHubReader:
         return {"tag": data["tag_name"], "name": data.get("name") or "", "url": data["html_url"], "published_at": data.get("published_at"), "body": data.get("body") or "", "fixture": False}
 
     def issue(self, repository: str, number: int) -> dict[str, Any]:
+        fixture = self._fixture(repository, number, "issue")
+        if fixture is not None:
+            return fixture
         return self._issue(self._call(repository, f"issues/{number}"))
 
     def pull_request(self, repository: str, number: int) -> dict[str, Any]:
+        fixture = self._fixture(repository, number, "pull_request")
+        if fixture is not None:
+            return fixture
         return self._issue(self._call(repository, f"pulls/{number}"))
+
+    def _fixture(self, repository: str, number: int, key: str) -> dict | None:
+        self._repository(repository)
+        if type(number) is not int or number < 1:
+            raise ValueError("编号必须为正整数")
+        state = StateStore(self.settings.state_path).load()
+        active = state.get("active_judgment") or {}
+        event = active.get("event", {})
+        expected = "issues.opened" if key == "issue" else "pull_request.opened"
+        if event.get("fixture") is True and event.get("repository") == repository and event.get("type") == expected:
+            item = event[key]
+            if item["number"] == number:
+                return {**item, "fixture": True, "source": "local-event", "event_id": event["event_id"]}
+        return None
 
     def search_history(self, repository: str, query: str) -> dict[str, Any]:
         if not query.strip():

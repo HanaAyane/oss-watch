@@ -1,0 +1,14 @@
+{
+  "event_id": "demo-pr-menu-position-20261113",
+  "type": "pull_request.opened",
+  "repository": "dsh-reasoning-effort",
+  "fixture": true,
+  "pull_request": {
+    "number": 100002,
+    "title": "【模拟 PR】建议始终将菜单固定到视口左侧",
+    "state": "open",
+    "body": "本地模拟贡献提议，未在线上创建分支或 PR。为修复手机菜单裁切，建议删除菜单的边界检测，统一使用 left: 0。请对照当前源码和移动端历史，起草讨论区反馈并列出验证要求；不修改仓库。",
+    "proposed_change": "删除 positionNativeModelMenu 的边界判断，所有视口固定 left: 0（仅提议，未实现）",
+    "comments": []
+  }
+}

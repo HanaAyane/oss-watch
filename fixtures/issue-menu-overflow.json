@@ -1,0 +1,13 @@
+{
+  "event_id": "demo-issue-menu-overflow-20261113",
+  "type": "issues.opened",
+  "repository": "dsh-reasoning-effort",
+  "fixture": true,
+  "issue": {
+    "number": 100001,
+    "title": "【模拟新 Issue】手机端模型菜单左侧被截断",
+    "state": "open",
+    "body": "这是一份本地模拟反馈，不是线上真实 Issue。手机竖屏打开模型与推理强度菜单，弹层左边被裁掉；切换模型后偶发。请检查当前定位代码和历史移动端问题，提出排查建议并起草回复。缺少浏览器、视口和 DSH 版本，请明确需要补充的信息，不要假定已经复现。",
+    "comments": []
+  }
+}

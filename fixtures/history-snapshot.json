@@ -3,6 +3,7 @@
   "fixture": true,
   "description": "开发演示时通过只读 GitHub API 获取的公开历史摘要，不代表实时状态。",
   "repository": "dsh-reasoning-effort",
+  "github": "HanaAyane/dsh-reasoning-effort",
   "captured_at": "2026-11-13",
   "issues": [
     {
