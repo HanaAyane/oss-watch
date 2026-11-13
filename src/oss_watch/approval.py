@@ -1,6 +1,8 @@
 """审批门：所有发送意图都只能到草稿，不提供绕过审批的执行入口。"""
 from __future__ import annotations
 
+from pathlib import Path
+
 from .config import Settings
 from .state import StateStore
 
@@ -20,18 +22,19 @@ class ApprovalGate:
         return self._draft(event_id, "comment", body, {"repository": repository, "target_number": target_number})
 
     def draft_patch(self, event_id: str, repository: str, path: str, patch: str) -> dict:
-        if not path.endswith(".md") or ".." in path or not patch.strip():
-            raise ValueError("补丁草稿必须使用 .md 文件名和有效内容")
-        return self._draft(event_id, "patch", patch, {"repository": repository, "path": path})
+        destination = Path(path)
+        if destination.is_absolute() or len(destination.parts) != 1 or destination.suffix != ".md" or not patch.strip():
+            raise ValueError("补丁草稿必须使用单层 .md 文件名和有效内容")
+        return self._draft(event_id, "patch", patch, {"repository": repository, "path": path}, destination)
 
-    def _draft(self, event_id: str, kind: str, body: str, metadata: dict) -> dict:
+    def _draft(self, event_id: str, kind: str, body: str, metadata: dict, destination: Path | None = None) -> dict:
         from .config import safe_event_id
         safe_event_id(event_id)
         state = self.store.load()
         pending = state.get("pending_approval")
         if pending is None or pending.get("event_id") != event_id:
             raise ValueError("只能为当前待拍板轮次写草稿")
-        path = self.settings.runs_root / event_id / f"{kind}.md"
+        path = self.settings.runs_root / event_id / (destination or Path(f"{kind}.md"))
         self.store.write_artifact(path, body)
         pending["artifacts"][kind] = str(path)
         self.store.save(state)

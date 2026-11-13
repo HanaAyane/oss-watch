@@ -161,7 +161,7 @@ class VersionWatchWorkflow:
       const effortPane = structuredMenu
         ? panes.find(pane => pane.props['{contract['pane_marker']}'] === '{contract['effort_pane']}')
         : undefined
-      // effort 入口收到 models 窗格；session 等其他窗格绝不替换，避免覆盖 Agent Teams。
+      // 推理入口仍放回 models 窗格；session 等其他窗格绝不替换，避免覆盖 Agent Teams。
       const remainingPanes = element.props.children.filter(pane => pane !== modelPane && pane !== effortPane)
       if (!isValidElement<{{ children: ReactNode[] }}>(modelPane) || !Array.isArray(modelPane.props.children)) return element
       const modelRow = structuredMenu

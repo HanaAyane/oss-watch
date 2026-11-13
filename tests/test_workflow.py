@@ -80,6 +80,11 @@ class WorkflowTests(unittest.TestCase):
         self.workflow.run(self.event)
         with self.assertRaises(ValueError):
             self.gate.draft_comment("other-event", "target", None, "不该写入")
+        with self.assertRaises(ValueError):
+            self.gate.draft_patch(self.event["event_id"], "target", "../escape.md", "内容")
+        draft = self.gate.draft_patch(self.event["event_id"], "target", "reviewed-change.md", "# 审查后的补丁\n")
+        self.assertTrue(Path(draft["artifact"]).is_file())
+        self.assertEqual(self.store.load()["pending_approval"]["artifacts"]["patch"], draft["artifact"])
         review = self.store.review(self.event["event_id"], "approve", "先留档")
         self.assertEqual(review["delivery"], "not-sent")
         self.assertIsNone(self.store.load()["pending_approval"])
