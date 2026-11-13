@@ -24,7 +24,7 @@ python -m venv .venv
 
 ### 1. 本地收件箱：保存尚未处理的事件
 
-收件箱由 `enqueue` 命令、`src/oss_watch/inbox.py` 和状态目录下的 `inbox/`、`inbox-archive/` 组成。`enqueue` 通过 `events.py` 校验事件，先写临时 `.tmp` 文件，再用 `os.replace` 原子改名为 `inbox/<event_id>.json`，避免等待器读到半份 JSON。队列按文件名排序；一轮成功提交待拍板或识别为已处理后，原事件移到 `inbox-archive/`，异常时保留收件文件。
+收件箱由 `enqueue` 命令、`src/oss_watch/inbox.py` 和状态目录下的 `oss-watch.sqlite` 组成。`enqueue` 通过 `events.py` 校验事件后，在一个 SQLite 事务中把原事件作为入队事实追加到数据库，不再写入 `inbox/<event_id>.json`。队列沿用旧版 `<event_id>.json` 名称的排序；一轮成功提交待拍板或识别为已处理后，追加归档事实并从当前队列移除，原事件与历史仍保留在库中。
 
 每份事件都是 JSON 对象，用 `event_id` 标识事件，用 `repository` 指定 `config/watch.json` 中的白名单别名，`type` 决定正文对象；模拟事件显式带上布尔值 `fixture: true`。支持的正文如下，完整例子见 `fixtures/`：
 
@@ -34,13 +34,13 @@ python -m venv .venv
 | `issues.opened` | `issue`，包含正整数 `number`、非空 `title` 和字符串 `body`。 |
 | `pull_request.opened` | `pull_request`，包含正整数 `number`、非空 `title` 和字符串 `body`。 |
 
-事件正文是不受信任的数据，不能授权工具操作。同 ID、同正文的排队投递不会重复写入，同 ID、不同正文会被拒绝。**`enqueue` 只负责落盘，不会启动或唤醒已经退出的 `watch`**；交接依靠正在扫描收件箱的等待器，或人之后重新运行它。
+事件正文是不受信任的数据，不能授权工具操作。同 ID、同正文的排队投递不会重复写入，同 ID、不同正文会被拒绝。**`enqueue` 只负责写入数据库，不会启动或唤醒已经退出的 `watch`**；交接依靠正在扫描队列的等待器，或人之后重新运行它。
 
-### 2. watch 等待器：从文件队列派出一轮判断
+### 2. watch 等待器：从 SQLite 队列派出一轮判断
 
-`python demo.py watch` 从 `demo.py` 进入 `src/oss_watch/cli.py`，由 `inbox.py` 的 `EventInbox.run()` 扫描收件箱，再交给 `pi_judgment.py` 准备原事件和提示词、启动 Pi。默认每秒扫描一次；空闲等待时不启动模型，也不访问 GitHub。`--once` 让空队列立即返回，不绕过审批门。
+`python demo.py watch` 从 `demo.py` 进入 `src/oss_watch/cli.py`，由 `inbox.py` 的 `EventInbox.run()` 扫描 SQLite 中的当前队列，再交给 `pi_judgment.py` 准备原事件和提示词、启动 Pi。默认每秒扫描一次；空闲等待时不启动模型，也不访问 GitHub。`--once` 让空队列立即返回，不绕过审批门。
 
-每次运行最多派出一个新事件的模型轮次，完成后归档事件并退出；遇到已处理事件只归档，不再启动模型。若已有 `pending_approval` 或未完成的 `active_judgment`，等待器返回 `blocked` 并退出，后续文件留在队列。待拍板时先审批，未完成时先用 `pi --resume-round` 接续，再重新运行 `watch`。它是本机前台等待器，不是常驻中台，也没有内置公网 Webhook、定时拉取或自动重启服务。
+每次运行最多派出一个新事件的模型轮次，完成后归档事件并退出；遇到已处理事件只归档，不再启动模型。若已有 `pending_approval` 或未完成的 `active_judgment`，等待器返回 `blocked` 并退出，后续事件留在队列。待拍板时先审批，未完成时先用 `pi --resume-round` 接续，再重新运行 `watch`。它是本机前台等待器，不是常驻中台，也没有内置公网 Webhook、定时拉取或自动重启服务。
 
 ### 3. 本机交互 Pi：读证据并提出本轮建议
 
@@ -50,7 +50,7 @@ Pi 负责搜索源码与历史、说明证据和不确定性、写评论与补�
 
 ### 4. MCP 工具：把有限能力提供给 Pi
 
-MCP 由 `src/oss_watch/mcp_server.py` 注册工具，通过 `services.py` 组装只读仓库、GitHub、历史检索、状态与草稿服务。项目配置从仓库根目录启动 stdio 服务：`.venv\Scripts\python.exe -m oss_watch.mcp_server`。它与 CLI 使用同一套配置和 `OSS_WATCH_VAR`，通过磁盘交接状态，不需要额外部署中台。
+MCP 由 `src/oss_watch/mcp_server.py` 注册工具，通过 `services.py` 组装只读仓库、GitHub、历史检索、状态与草稿服务。项目配置从仓库根目录启动 stdio 服务：`.venv\Scripts\python.exe -m oss_watch.mcp_server`。它与 CLI 使用同一套配置和 `OSS_WATCH_VAR`，共用同一个状态目录中的 SQLite 库交接状态，不需要额外部署中台。
 
 服务共注册 **12 个工具**，其中 `record_approval` 对本轮 Pi 隐藏；下表列出全部工具及关键边界。
 
@@ -73,15 +73,15 @@ MCP 由 `src/oss_watch/mcp_server.py` 注册工具，通过 `services.py` 组装
 
 ### 5. 本地状态与草稿：让进程退出后仍有据可查
 
-这一层由 `src/oss_watch/state.py` 和磁盘文件组成。默认状态目录为 `var/`，也可用 `OSS_WATCH_VAR` 指定项目内子目录；CLI、Pi 启动器和 MCP 必须指向同一个目录。`state.json` 保存原事件、活动轮次、待拍板、去重记录和审批/发送结果；`runs/<event_id>/` 保存 `prompt.md`、`conclusion.json`、`comment.md` 与通常命名为 `patch.md` 的补丁草稿，实际路径以状态中的 `artifacts` 为准。
+这一层由 `src/oss_watch/state.py` 和状态目录下的 `oss-watch.sqlite` 组成。默认状态目录为 `var/`，也可用 `OSS_WATCH_VAR` 指定项目内子目录；CLI、Pi 启动器和 MCP 必须指向同一个目录。库中的追加式事实日志保存原事件、活动轮次、待拍板、去重记录和审批/发送结果，当前视图每次从日志推导；`runs/<event_id>/` 保存 `prompt.md`、`conclusion.json`、`comment.md` 与通常命名为 `patch.md` 的补丁草稿，实际路径以状态中的 `artifacts` 为准。
 
-`conclusion.json` 说明判断、理由、源码证据、置信度和待验证项；两份 Markdown 分别供人审阅拟回复和拟改动。它们都在人工拍板前写好，提交后冻结 Pi 草稿，并保存评论摘要供发送前核对。状态原子写入，写锁、Pi 租约和等待器租约拒绝并发操作。**文件持久化不依赖 `watch` 或 Pi 一直运行**；下次 CLI 从文件读取，未完成轮次也据此接续。
+`conclusion.json` 说明判断、理由、源码证据、置信度和待验证项；两份 Markdown 分别供人审阅拟回复和拟改动。它们都在人工拍板前写好，提交后冻结 Pi 草稿，并保存评论摘要供发送前核对。状态以短事务追加事实，写锁、Pi 租约和等待器租约拒绝并发操作。**数据库持久化不依赖 `watch` 或 Pi 一直运行**；下次 CLI 从库中重建当前状态，未完成轮次也据此接续。旧的 `state.json`、`inbox/` 和 `inbox-archive/` 会在首次打开空库时一次性导入，之后只作只读备份。
 
 ### 6. 审批门：由人按事件 ID 作决定
 
 审批由 CLI 的 `approve` / `reject`、`src/oss_watch/approval.py` 和 `state.py` 协作完成。人先用 `status` 核对待办并打开草稿，再执行 `python demo.py approve <event_id>` 或 `python demo.py reject <event_id>`；两条命令都必须带上当前待拍板的事件 ID，缺失、不匹配或重复审批会被拒绝。
 
-审批先更新本地 JSON，记录决定和备注、清除待拍板，再交给评论发送组件检查外发条件。它不重新生成草稿，不应用补丁，也不启动下一轮模型。拒绝会保留原产物；批准后的补丁仍为 `patch_delivery: local-only`。MCP 的 `record_approval` 只做本地记录，不连接这个发送步骤，而且不向本轮 Pi 开放。
+审批先在 SQLite 事务中追加本地拍板事实，记录决定和备注、清除待拍板，再交给评论发送组件检查外发条件。它不重新生成草稿，不应用补丁，也不启动下一轮模型。拒绝会保留原产物；批准后的补丁仍为 `patch_delivery: local-only`。MCP 的 `record_approval` 只做本地记录，不连接这个发送步骤，而且不向本轮 Pi 开放。
 
 ### 7. 被值守仓库：只读证据来源
 
