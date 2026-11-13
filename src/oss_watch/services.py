@@ -23,8 +23,8 @@ class Services:
     workflow: VersionWatchWorkflow
 
 
-def create_services() -> Services:
-    settings = load_settings()
+def create_services(settings: Settings | None = None) -> Services:
+    settings = settings or load_settings()
     state = StateStore(settings.state_path)
     return Services(
         settings=settings,

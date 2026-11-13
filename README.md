@@ -1,120 +1,125 @@
 # 开源值守
 
-面向个人开源仓库的本地事件驱动维护助手。第一期只做一件小而完整的事：**收到模拟 DeepSeek Harness 发版后，检查 `dsh-reasoning-effort` 的真实源码，给出适配结论和草稿，然后停下来等人拍板。**
+面向个人开源仓库的本地事件驱动维护助手。**智能判断交给本机 Pi**：模拟发版叫醒一轮模型，Pi 通过 MCP 只读检查真实 `dsh-reasoning-effort`，独立判断、写草稿，然后退出，等人拍板。
 
-不是聊天套壳，也不是自动发评论机器人：读取、检索、草稿、审批都有明确的本地边界。
+`python demo.py demo` 保留为固定规则对照和回归，**不是大模型判断**。本期不接入 Agent Autoloop，也不新增固定适配规则。
 
-## 一条命令跑演示
+## 主演示：在终端启动交互 Pi
 
-要求：本机 Python 3.11+，参考仓库位于 `E:\code\插件\dsh-reasoning-effort`（路径可在配置中改）。
+要求：Python 3.11+、本机 Pi 1.5.2 和已可用的模型配置；目标仓库默认位于 `E:\code\插件\dsh-reasoning-effort`。模型登录由用户在本机管理，本项目不保存登录配置。首次安装：
+
+```powershell
+Set-Location E:\code\oss-watch
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install -e .
+```
+
+若本项目 `var/` 已有上一期 `demo-dsh-v0.3.0-rc.1` 待拍板，先检查并**备份移走本项目的整个 var 目录**。不要操作被值守仓库的文件。例如在仓库根目录执行：
+
+```powershell
+python demo.py status
+$backup = Join-Path $env:TEMP ('oss-watch-var-' + (Get-Date -Format 'yyyyMMdd-HHmmss'))
+Move-Item -LiteralPath (Join-Path $PWD 'var') -Destination $backup
+```
+
+开始一轮演示：
+
+```powershell
+python demo.py pi
+# 等价地显式指定同一份模拟发版：
+# python demo.py pi fixtures/release-v0.3.0-rc.1.json
+```
+
+这是当前终端内可交互、可观察工具调用的 Pi TUI，**没有使用 `pi -p`**，没有后台子 agent。启动器会：
+
+1. 校验事件和去重，确认没有待拍板或未完成的轮次，将事件和提示词写入本项目 `var/`，状态为 `judging`。
+2. 以仓库根目录为 cwd 启动 `pi --approve`，信任项目本地配置，并将完整模拟事件作为初始消息传入。
+3. Pi 通过 MCP 读取真实源码、搜索历史，自行给出中文结论；评论和补丁只写本地草稿。证据不足时明确写出原因，补丁文件可保存无法可靠产出补丁的说明。
+4. Pi 调用 `submit_judgment`，服务器核对源码引用、检查两份草稿后保存结论，转为 `pending_approval`。这里不使用固定规则生成结论或补丁。
+5. 项目扩展在 `agent_settled`（包括 Pi 自身重试结束后的边界）请求退出，关闭 MCP 子进程；终端回到 CLI 并显示产物路径。等拍板期间没有 Pi 进程空转。
+
+fixture 中的 `v0.3.0-rc.1` 和菜单结构变化是**模拟数据，并非 DeepSeek Harness 官方公告**。判断属于静态检查，实际新版兼容性仍需人工运行时验证。CLI 不预设模型必须得出哪个结论。
+
+### 查看产物与人工拍板
+
+```powershell
+python demo.py status
+Get-Content -Encoding UTF8 var/runs/demo-dsh-v0.3.0-rc.1/conclusion.json
+Get-Content -Encoding UTF8 var/runs/demo-dsh-v0.3.0-rc.1/comment.md
+Get-Content -Encoding UTF8 var/runs/demo-dsh-v0.3.0-rc.1/patch.md
+python demo.py approve demo-dsh-v0.3.0-rc.1 --note "先保留草稿"
+# 或拒绝：
+# python demo.py reject demo-dsh-v0.3.0-rc.1 --note "暂不跟进"
+```
+
+`approve` / `reject` 仅更改本项目 `var/state.json` 的审批记录，**即使批准也不发送**。再次运行同一事件返回 `already_processed`；上一轮未审批时，新事件不能开始。Pi 提交后的草稿不可变更。
+
+若模型报错、用户中断或一轮未调用 `submit_judgment`，CLI 会报告未完成，保留 `active_judgment` 和已有草稿，阻止新事件及规则对照启动。修复本机模型问题后，显式接续同一事件：
+
+```powershell
+python demo.py pi --resume-round
+```
+
+接续使用原事件和已有草稿，启动新的交互上下文，不依赖上一段 Pi 聊天记录。可先用 `python demo.py pi --prepare-only` 只准备事件与提示词，再用 `--resume-round` 启动。不同正文的同 ID 事件不能接续。短暂状态写锁与 Pi 进程租约防止并发写入/启动；异常断电留下锁时，确认相关进程已退出后才移走 `var/state.lock` 或 `var/state.pi.lock`。
+
+### 项目 MCP 配置与工具自动执行
+
+实际配置是 **`.pi/mcp.json`**；根目录 `pi.mcp.json` 是等价模板。stdio 使用 `.venv\Scripts\python.exe -m oss_watch.mcp_server`，cwd 为仓库根，环境显式设置 `OSS_WATCH_GITHUB=0`。无需修改 `~/.pi/agent/mcp.json`。
+
+Pi 只加载受信任项目的本地配置，因此必须使用 **`pi --approve`** 或在交互 Pi 中保存项目信任。`--approve` 是信任项目文件，**不是业务审批**。Pi 1.5.2 默认执行工具时不逐条询问，没有需要另配的 `autoApprove` 开关，参见 [Pi 安全文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/security.md) 和 [MCP 文档](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/mcp.md)。
+
+启动器通过以下选项限制本轮工具；关闭其他扩展、技能、提示词和上下文文件发现，仅显式加载内置 MCP 与本项目的一轮退出扩展：
+
+```text
+--approve --no-extensions -e builtin:mcp -e .pi/one-round.ts
+--no-skills --no-prompt-templates --no-context-files
+--tools mcp__oss_watch__* --exclude-tools mcp__oss_watch__record_approval
+```
+
+项目配置也将 `record_approval` 设为 hidden，扩展额外拒绝该工具和其他命名空间的工具调用。只读和草稿工具自动执行，人工拍板继续使用 CLI；没有发送工具。Pi 仍会读取用户模型设置，并可能连接已启用的全局 MCP，但本轮不向模型开放这些服务的工具；不改写用户全局配置。
+
+## 固定规则对照
 
 ```powershell
 python demo.py demo
 ```
 
-这条命令**不需要安装依赖、不需要网络、不需要 Token**。它会：
+这条路径无需模型、依赖或网络；使用同一 fixture 检查既定适配契约，按固定规则生成结论及补丁。它共享事件去重与审批状态，所以不能与 Pi 用同一份 `var/` 重复演示。比较两条路径前分别备份移走本项目的 `var/`，保留各自产物。
 
-1. 读取 `fixtures/release-v0.3.0-rc.1.json`，把模拟发版当作一次 `release.published` 事件。
-2. 只读检查 `package.json`、`CHANGELOG.md` 和 `src/client/native-selector.tsx` 等真实文件。
-3. 结合历史 Issue / PR 快照判断是否需要适配。
-4. 将结论、评论草稿、补丁草稿写入 `var/runs/<事件 ID>/`。
-5. 把事件写入 `var/state.json`，状态停在 `pending_approval`；**不会修改参考仓库，也不会向外发评论或开 PR**。
+## MCP 能力与边界
 
-本次 fixture 模拟菜单改为带 `data-dsh-pane` 标识的可重排窗格。旧插件仍按 `aria-label` 和第二个子节点定位，因此预期判断为「需要修改」。该 fixture 不是 DeepSeek Harness 官方公告；补丁草稿没有经过新版运行时验证。
+保留原有 11 个工具，增加 `submit_judgment`；共 12 个服务端工具，本轮 Pi 可见 11 个（人工审批记录工具隐藏）。
 
-### 查看状态与本地审批
-
-```powershell
-python demo.py status
-python demo.py approve demo-dsh-v0.3.0-rc.1 --note "先保留草稿"
-# 或者拒绝：
-python demo.py reject demo-dsh-v0.3.0-rc.1 --note "暂不跟进"
-```
-
-审批仅改变本地 JSON 记录。即使 `approve`，也**不会发送**。重复运行同一事件会返回 `already_processed`；上一轮未审批时，不会开始新一轮。若想重新演示，请先人工检查并移走本项目的 `var/` 目录；不要删除目标仓库的任何文件。
-
-### 输出在哪里
-
-- `var/state.json`：处理过的事件、上次结论、当前待拍板轮次、审批历史。
-- `var/runs/demo-dsh-v0.3.0-rc.1/conclusion.json`：判断、理由、源码证据、待验证事项。
-- `var/runs/demo-dsh-v0.3.0-rc.1/comment.md`：未发送的评论草稿。
-- `var/runs/demo-dsh-v0.3.0-rc.1/patch.md`：未应用的 unified diff 片段与改动说明。
-
-`var/` 是运行产物，已被 `.gitignore` 忽略。
-
-## MCP 工具（给本机 Pi 用）
-
-核心逻辑使用 Python 标准库；仅 MCP stdio 服务需要官方 Python SDK。推荐使用虚拟环境：
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\python.exe -m pip install -e .
-.\.venv\Scripts\python.exe -m oss_watch.mcp_server
-```
-
-最后一条是长驻 stdio 服务，等待 MCP 客户端连接，不会打印网页或自行执行演示。`pi.mcp.json` 提供等价配置模板；按所用 Pi 版本的 MCP 配置方式引入它即可。若当前 Pi 不能直接使用此模板，请按该版本的文档把命令改为 `.venv\Scripts\python.exe -m oss_watch.mcp_server`。第一期未要求、也未宣称已完成 Pi 实机接入。
-
-提供的工具：
-
-| 能力 | MCP 工具 |
+| 能力 | 工具 |
 | --- | --- |
-| 读仓库文件 | `read_repository_file` |
-| 指定仓库搜代码 | `search_repository` |
-| 读 GitHub Release / Issue / PR | `read_github_release` / `read_github_issue` / `read_github_pull_request` |
-| 检索历史 Issue / PR | `search_github_history` |
-| 检索本地历史快照与文档 | `search_history_and_docs` |
-| 写评论 / 补丁草稿 | `write_comment_draft` / `write_patch_draft` |
-| 查看待拍板 / 记录审批 | `get_pending_approval` / `record_approval` |
+| 只读源码、定向搜索 | `read_repository_file` / `search_repository` |
+| 可选 GitHub 只读查询 | `read_github_release` / `read_github_issue` / `read_github_pull_request` / `search_github_history` |
+| 本地历史和文档检索 | `search_history_and_docs` |
+| 只写本项目草稿 | `write_comment_draft` / `write_patch_draft` |
+| 提交模型结论，停在审批门 | `submit_judgment` |
+| 当前轮次及审批状态 | `get_pending_approval` |
+| 本地审批记录，本轮 Pi 隐藏 | `record_approval` |
 
-GitHub 在线读取默认关闭，不需要在演示中开启。需要时，复制 `.env.example` 为 `.env`，设置 `OSS_WATCH_GITHUB=1`，并自行确保 `gh auth login` 已完成。项目不接收、不保存、不打印 Token。所有 GitHub 工具只允许访问 `config/watch.json` 中登记的仓库。
+`config/watch.json` 限定仓库白名单、`writable: false` 和 `delivery.mode: draft-only`。读取拒绝路径越界；没有修改目标仓库、发送评论、推送目标分支或创建目标 PR 的实现。GitHub 在线读取默认关闭，主演示强制关闭；独立使用在线只读工具需显式设置 `OSS_WATCH_GITHUB=1` 并自行配置本机 `gh`。密钥与登录资料不进入项目。
 
-### 为什么既有 CLI 又有 MCP？
+运行产物均在忽略的 `var/`：`state.json` 保存去重、活动轮次和审批历史；`runs/<事件 ID>/` 保存 `prompt.md`、模型的 `conclusion.json`、`comment.md` 和 `patch.md`。补丁从不应用到目标仓库。
 
-- **CLI 是确定性的演示编排器**：一条命令跑通完整闭环，方便验收和回归测试。
-- **MCP 是同一套能力的工具接口**：Pi 可以读文件、查资料、生成草稿和请求审批。
-- 两者共享 JSON 状态与审批门，不存在绕过审批的隐藏发送接口。
-
-## 配置与安全边界
-
-`config/watch.json` 默认只配置 `dsh-reasoning-effort`，`writable: false`，`delivery.mode: draft-only`。
-
-- 仓库读取只允许相对路径，拒绝 `..`、绝对路径和符号链接逃逸。
-- 定向文本搜索排除隐藏目录、依赖和构建产物；不使用向量库、Docker、多 Agent 编排。
-- 本地 fixture 和在线返回都视为数据，不作为命令执行。
-- 没有发送评论、向目标仓库推分支、创建目标仓库 PR 的实现；`record_approval` 也不会外发。
-- `.env` 不入库；`.env.example` 只放变量名与用途，不放密钥。
-
-## 测试
+## 验证
 
 ```powershell
-python -m unittest discover -s tests -v
-python -m compileall -q src demo.py tests
-# 需先执行上面的虚拟环境安装：
-.\.venv\Scripts\python.exe tests\mcp_smoke.py
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m compileall -q src demo.py tests
+.\.venv\Scripts\python.exe tests/mcp_smoke.py
+
+# 不调用模型的 Pi 实机探针（Windows npm 全局安装示例）：
+$piPackage = Join-Path (Split-Path (Get-Command pi).Source) 'node_modules/@earendil-works/pi-coding-agent'
+node tests/pi_smoke.mjs $piPackage
 ```
 
-单元测试覆盖真实源码副本上的闭环、事件去重、审批边界、不支持的发版契约、源码变化时停止、路径越界和 GitHub 默认关闭。`mcp_smoke.py` 会真实启动 stdio 服务，完成握手、列工具，并调用读文件、搜索和审批状态工具。
+Python 测试使用临时源码副本验证规则回归、模型判断提交、源码引用校验、草稿冻结、事件去重、未审批阻塞、显式接续、锁和本地审批。MCP 冒烟真实启动 stdio，使用临时状态目录，检查全部工具并调用读文件、搜索、审批状态、两种草稿、判断提交与本地审批；不会改动现有业务状态。
 
-## 目录结构
+Pi 探针使用本机 Pi SDK、临时 agent 配置和仅本次有效的项目信任，加载真实 `.pi/mcp.json` 及退出扩展，列出工具并通过 Pi 调用三个只读工具，也验证一轮结束请求退出。它不发送模型请求，不读取用户登录资料、不改变用户全局配置、不写入业务状态。Pi 1.5.2 的 `mcp list` 子命令不能附加 `--approve`；保存项目信任后可另外运行 `pi mcp list --json` 检查配置。
 
-```text
-oss-watch/
-├── demo.py                    # 免安装依赖的演示入口
-├── config/watch.json          # 仓库白名单与 draft-only 配置
-├── fixtures/                  # 模拟发版与公开历史快照
-├── src/oss_watch/
-│   ├── workflow.py            # 版本适配判断与闭环编排
-│   ├── repository.py          # 只读文件与代码搜索
-│   ├── github.py              # 可选的 gh 只读访问
-│   ├── history.py             # 历史与文档定向检索
-│   ├── approval.py            # 草稿写入与审批门
-│   ├── state.py               # 原子 JSON 状态与审批记录
-│   ├── mcp_server.py          # stdio MCP 接口
-│   └── cli.py                 # demo / status / approve / reject
-├── tests/                     # 标准库单元测试
-└── var/                       # 本地状态与待拍板产物（不入库）
-```
+**连接探针与单元测试不等于模型判断验收。** 完整智能演示仍需用户在本机终端执行 `python demo.py pi`，观察真实模型读取、草稿和 `pending_approval`，再人工核对结论。
 
-## 第一期明确不做
-
-真实 webhook 轮询、自动发送评论、向被值守仓库开 PR、自动合并补丁、向量检索、模型微调、多 Agent 编排、Autoloop 接入。后续要增加发送能力时，仍必须单独设计审批与 dry-run 验证，而不是把草稿工具改名成发送工具。
+本期不包含常驻轮询、真实 webhook、Autoloop 中台、多 Agent 编排或任何自动外发。

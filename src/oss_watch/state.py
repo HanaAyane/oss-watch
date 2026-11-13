@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+from contextlib import contextmanager
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,21 @@ class StateStore:
         if data.get("schema_version") != 1:
             raise ValueError("本地状态版本不受支持")
         return data
+
+    @contextmanager
+    def locked(self, suffix: str = ".lock"):
+        """跨 CLI/MCP 串行化短暂写入；锁冲突直接返回，不空转等待。"""
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        lock = self.path.with_suffix(suffix)
+        try:
+            descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+        except FileExistsError as error:
+            raise ValueError(f"状态正在写入或本轮 Pi 正在运行；若进程异常终止，请确认进程已退出后移走 {lock}") from error
+        try:
+            os.close(descriptor)
+            yield
+        finally:
+            lock.unlink()
 
     def save(self, state: dict[str, Any]) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
@@ -46,13 +62,23 @@ class StateStore:
         event_id = event["event_id"]
         if event_id in state["processed_events"]:
             raise ValueError(f"事件已处理：{event_id}")
+        if state.get("pending_approval") is not None:
+            raise ValueError("上一轮仍在待拍板")
+        active = state.get("active_judgment")
+        if active is not None and active["event"]["event_id"] != event_id:
+            raise ValueError("另一轮 Pi 判断尚未结束")
         record = {"event_id": event_id, "type": event["type"], "status": "pending_approval", "processed_at": now_iso(), "artifacts": artifacts}
         state["processed_events"][event_id] = record
         state["last_conclusion"] = {"event_id": event_id, **conclusion}
         state["pending_approval"] = {**record, "conclusion": conclusion}
+        state.pop("active_judgment", None)
         self.save(state)
 
     def review(self, event_id: str, decision: str, note: str) -> dict[str, Any]:
+        with self.locked():
+            return self._review(event_id, decision, note)
+
+    def _review(self, event_id: str, decision: str, note: str) -> dict[str, Any]:
         if decision not in {"approve", "reject"}:
             raise ValueError("decision 只能是 approve 或 reject")
         state = self.load()
