@@ -37,5 +37,8 @@ class ApprovalGate:
         path = self.settings.runs_root / event_id / (destination or Path(f"{kind}.md"))
         self.store.write_artifact(path, body)
         pending["artifacts"][kind] = str(path)
+        processed = state["processed_events"].get(event_id)
+        if processed is not None:
+            processed["artifacts"][kind] = str(path)
         self.store.save(state)
         return {"status": "pending_approval", "delivery": "not-sent", "artifact": str(path), **metadata}
