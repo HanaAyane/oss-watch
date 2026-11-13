@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -42,6 +43,7 @@ class Settings:
     repositories: dict[str, Repository]
     github_enabled: bool
     delivery_mode: str
+    send_comments: bool = False
 
 
 def _text(value: Any, field: str) -> str:
@@ -62,8 +64,7 @@ def load_settings() -> Settings:
         if not isinstance(item, dict):
             raise ValueError(f"仓库 {name} 的配置必须是对象")
         github = _text(item.get("github"), f"{name}.github")
-        owner, separator, repo = github.partition("/")
-        if not separator or not owner or not repo or "/" in repo:
+        if not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", github):
             raise ValueError("github 必须写成 owner/repo")
         root_value = os.environ.get("OSS_WATCH_TARGET_ROOT") if name == "dsh-reasoning-effort" else None
         root = Path(root_value or _text(item.get("root"), f"{name}.root")).expanduser()
@@ -72,18 +73,30 @@ def load_settings() -> Settings:
         root = root.resolve()
         if not root.is_dir():
             raise ValueError(f"只读仓库目录不存在：{root}")
-        repositories[name] = Repository(name, root, github, item.get("writable") is True)
+        if item.get("writable") is True:
+            raise ValueError("被值守仓库必须只读，禁止 writable: true")
+        repositories[name] = Repository(name, root, github, False)
     delivery_mode = data.get("delivery", {}).get("mode", "draft-only")
     if delivery_mode != "draft-only":
         raise ValueError("第一期只支持 delivery.mode = draft-only")
+    var_root = Path(os.environ.get("OSS_WATCH_VAR", PROJECT_ROOT / "var")).expanduser().resolve()
+    if not var_root.is_relative_to(PROJECT_ROOT) or var_root == PROJECT_ROOT:
+        raise ValueError("OSS_WATCH_VAR 必须是 oss-watch 项目内的子目录")
+    for repository in repositories.values():
+        if var_root.is_relative_to(repository.root) or repository.root.is_relative_to(var_root):
+            raise ValueError("本地状态目录不能与被值守仓库重叠")
+    for path in (var_root / "state.json", var_root / "runs", var_root / "inbox", var_root / "inbox-archive"):
+        if not path.resolve().is_relative_to(var_root):
+            raise ValueError("本地状态、草稿和收件箱不得通过链接逃逸")
     return Settings(
         project_root=PROJECT_ROOT,
-        state_path=PROJECT_ROOT / "var" / "state.json",
-        runs_root=PROJECT_ROOT / "var" / "runs",
+        state_path=var_root / "state.json",
+        runs_root=var_root / "runs",
         fixtures_root=PROJECT_ROOT / "fixtures",
         repositories=repositories,
         github_enabled=os.environ.get("OSS_WATCH_GITHUB", "0") == "1",
         delivery_mode=delivery_mode,
+        send_comments=os.environ.get("OSS_WATCH_SEND_COMMENTS", "0") == "1",
     )
 
 
@@ -100,7 +113,7 @@ def repository_path(repository: Repository, relative_path: str) -> Path:
 
 
 def safe_event_id(event_id: str) -> str:
-    if not event_id or len(event_id) > 128 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for c in event_id):
+    if not isinstance(event_id, str) or not event_id or len(event_id) > 128 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789._-" for c in event_id):
         raise ValueError("event_id 只能包含字母、数字、点、下划线和连字符，且不超过 128 字符")
     if event_id in {".", ".."}:
         raise ValueError("无效的 event_id")

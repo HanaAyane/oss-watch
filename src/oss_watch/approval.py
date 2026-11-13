@@ -23,12 +23,22 @@ class ApprovalGate:
                 if path.is_relative_to(root) and path.is_file():
                     text = path.read_text(encoding="utf-8")
                     drafts[kind] = {"content": text[:30000], "truncated": len(text) > 30000}
-        return {"delivery_mode": self.settings.delivery_mode, "active_judgment": active, "active_drafts": drafts, "pending_approval": state.get("pending_approval"), "reviews": state.get("reviews", [])[-20:]}
+        return {"delivery_mode": self.settings.delivery_mode, "send_comments": self.settings.send_comments,
+                "active_judgment": active, "active_drafts": drafts, "pending_approval": state.get("pending_approval"),
+                "last_conclusion": state.get("last_conclusion"),
+                "processed_events": {key: value["status"] for key, value in state["processed_events"].items()},
+                "reviews": state.get("reviews", [])[-20:]}
 
     def draft_comment(self, event_id: str, repository: str, target_number: int | None, body: str) -> dict:
         if (target_number is not None and target_number < 1) or not body.strip():
             raise ValueError("target_number 和评论正文必须有效")
         return self._draft(event_id, "comment", body, {"repository": repository, "target_number": target_number})
+
+    def review(self, event_id: str, decision: str, note: str) -> dict:
+        """仅 CLI 调用：先持久化人工决定，再按开关尝试发送讨论区评论。"""
+        review = self.store.review(event_id, decision, note)
+        from .delivery import CommentDelivery
+        return CommentDelivery(self.settings, self.store).after_review(review)
 
     def draft_patch(self, event_id: str, repository: str, path: str, patch: str) -> dict:
         destination = Path(path)
@@ -54,11 +64,19 @@ class ApprovalGate:
             raise ValueError("草稿仓库不在白名单内")
         if is_active and active["event"]["repository"] != repository:
             raise ValueError("草稿仓库与当前事件不一致")
+        if is_active and kind == "comment":
+            from .events import discussion_target
+            expected = discussion_target(active["event"])
+            if metadata["target_number"] is not None and metadata["target_number"] != expected:
+                raise ValueError("评论目标与本轮事件不一致")
+            metadata["target_number"] = expected
         if not is_active and pending.get("conclusion", {}).get("engine") == "pi":
             raise ValueError("Pi 已提交判断，待拍板草稿不可变更")
         if destination is not None and destination.name in {"comment.md", "conclusion.md", "prompt.md"}:
             raise ValueError("补丁文件名与保留产物冲突")
         path = self.settings.runs_root / event_id / (destination or Path(f"{kind}.md"))
+        if not path.resolve().is_relative_to(self.settings.runs_root.resolve()):
+            raise ValueError("草稿路径不允许链接逃逸")
         self.store.write_artifact(path, body)
         record = active if is_active else pending
         record["artifacts"][kind] = str(path)

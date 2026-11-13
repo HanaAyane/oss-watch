@@ -11,13 +11,15 @@ from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
 
-async def main(state_root: Path) -> None:
+async def main(state_root: Path, fixture: str) -> None:
     root = Path(__file__).resolve().parents[1]
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(root / "src"), os.environ.get("PYTHONPATH", "")]))
     env["OSS_WATCH_CONFIG"] = str(root / "config" / "watch.json")
     env["OSS_WATCH_GITHUB"] = "0"
-    parameters = StdioServerParameters(command=sys.executable, args=[str(Path(__file__).resolve()), "--serve", str(state_root)], cwd=str(root), env=env)
+    event = json.loads((root / "fixtures" / fixture).read_text(encoding="utf-8"))
+    event_id = event["event_id"]
+    parameters = StdioServerParameters(command=sys.executable, args=[str(Path(__file__).resolve()), "--serve", str(state_root), fixture], cwd=str(root), env=env)
     async with stdio_client(parameters) as (read, write):
         async with ClientSession(read, write) as session:
             await session.initialize()
@@ -31,8 +33,14 @@ async def main(state_root: Path) -> None:
             response = await session.call_tool("search_repository", {"repository": "dsh-reasoning-effort", "query": "aria-label", "glob": "*.tsx"})
             assert json.loads(response.content[0].text)["matches"], "搜索没有命中真实源码"
             response = await session.call_tool("get_pending_approval", {})
-            assert json.loads(response.content[0].text)["active_judgment"]["event"]["event_id"] == "demo-dsh-v0.3.0-rc.1"
-            arguments = {"event_id": "demo-dsh-v0.3.0-rc.1", "repository": "dsh-reasoning-effort"}
+            assert json.loads(response.content[0].text)["active_judgment"]["event"]["event_id"] == event_id
+            if event["type"] != "release.published":
+                key = "issue" if event["type"] == "issues.opened" else "pull_request"
+                response = await session.call_tool("read_github_" + key, {"repository": event["repository"], "number": event[key]["number"]})
+                assert not response.isError, response
+                snapshot = json.loads(response.content[0].text)
+                assert snapshot["source"] == "local-event" and snapshot["fixture"] is True
+            arguments = {"event_id": event_id, "repository": "dsh-reasoning-effort"}
             for name, extra in (("write_comment_draft", {"body": "# 隔离冒烟评论草稿"}),
                                 ("write_patch_draft", {"path": "patch.md", "patch": "# 隔离冒烟补丁说明，未应用"})):
                 response = await session.call_tool(name, {**arguments, **extra})
@@ -51,10 +59,10 @@ async def main(state_root: Path) -> None:
             assert not response.isError, response
             assert json.loads(response.content[0].text)["delivery"] == "not-sent"
             assert json.loads((state_root / "state.json").read_text(encoding="utf-8"))["pending_approval"] is None
-            print(json.dumps({"mcp": "隔离 stdio 握手、全部工具清单、真实读取、草稿、判断提交、仅本地审批均通过", "tool_count": len(names)}, ensure_ascii=False, indent=2))
+            print(json.dumps({"mcp": "隔离 stdio 握手、全部工具清单、真实读取、草稿、判断提交、仅本地审批均通过", "event_type": event["type"], "tool_count": len(names)}, ensure_ascii=False, indent=2))
 
 
-def serve(state_root: Path) -> None:
+def serve(state_root: Path, fixture: str) -> None:
     from oss_watch.config import load_settings
     from oss_watch.mcp_server import register_tools
     from oss_watch.pi_judgment import PiJudgment
@@ -62,14 +70,15 @@ def serve(state_root: Path) -> None:
 
     settings = replace(load_settings(), state_path=state_root / "state.json", runs_root=state_root / "runs")
     services = create_services(settings)
-    event = services.workflow.load_event(str(settings.fixtures_root / "release-v0.3.0-rc.1.json"))
+    event = services.workflow.load_event(str(settings.fixtures_root / fixture))
     PiJudgment(settings).prepare(event)
     register_tools(services).run(transport="stdio")
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 3 and sys.argv[1] == "--serve":
-        serve(Path(sys.argv[2]))
+    if len(sys.argv) == 4 and sys.argv[1] == "--serve":
+        serve(Path(sys.argv[2]), sys.argv[3])
     else:
-        with tempfile.TemporaryDirectory(prefix="oss-watch-mcp-smoke-") as temporary:
-            asyncio.run(main(Path(temporary)))
+        for fixture in ("release-v0.3.0-rc.1.json", "issue-menu-overflow.json", "pr-menu-position.json"):
+            with tempfile.TemporaryDirectory(prefix="oss-watch-mcp-smoke-") as temporary:
+                asyncio.run(main(Path(temporary), fixture))

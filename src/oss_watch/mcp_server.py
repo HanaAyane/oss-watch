@@ -14,7 +14,7 @@ def result(value: Any) -> str:
 def register_tools(services: Services):
     from mcp.server.fastmcp import FastMCP
 
-    mcp = FastMCP("开源值守", instructions="只读仓库、检索资料并生成草稿。任何外发动作都必须停在审批门；第一期不提供真正发送能力。")
+    mcp = FastMCP("开源值守", instructions="被值守仓库始终只读；补丁永远只保留本地草稿。MCP 不提供发送工具；人工审批与可选讨论区评论发送只走 CLI。")
 
     @mcp.tool()
     def read_repository_file(repository: str, path: str, start_line: int = 1, end_line: int | None = None) -> str:
@@ -33,12 +33,12 @@ def register_tools(services: Services):
 
     @mcp.tool()
     def read_github_issue(repository: str, number: int) -> str:
-        """读取已配置仓库的指定 GitHub Issue。"""
+        """读取指定 Issue；本轮模拟事件返回本地快照，其他查询须显式开启在线读取。"""
         return result(services.github.issue(repository, number))
 
     @mcp.tool()
     def read_github_pull_request(repository: str, number: int) -> str:
-        """读取已配置仓库的指定 GitHub Pull Request。"""
+        """读取指定 PR；本轮模拟事件返回本地快照，其他查询须显式开启在线读取。"""
         return result(services.github.pull_request(repository, number))
 
     @mcp.tool()
@@ -75,7 +75,7 @@ def register_tools(services: Services):
 
     @mcp.tool()
     def record_approval(event_id: str, decision: str, note: str = "") -> str:
-        """仅记录 approve/reject；第一期即使批准也不会外发。"""
+        """仅记录本地 approve/reject，永远不触发发送；人工应使用 CLI 拍板。"""
         return result(services.state.review(event_id, decision, note))
 
     return mcp
