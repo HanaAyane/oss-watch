@@ -27,9 +27,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status", help="查看当前待拍板轮次")
     enqueue = sub.add_parser("enqueue", help="原子投递本地事件，交给已启动的 watch")
     enqueue.add_argument("event")
-    watch = sub.add_parser("watch", help="在当前终端等本地文件，派一轮交互 Pi 后退出")
+    watch = sub.add_parser("watch", help="在当前终端扫描 SQLite 收件箱，派一轮交互 Pi 后退出")
     watch.add_argument("--once", action="store_true", help="收件箱为空时立即退出")
-    watch.add_argument("--interval", type=float, default=1.0, help="本地文件扫描间隔（秒）")
+    watch.add_argument("--interval", type=float, default=1.0, help="收件箱扫描间隔（秒）")
     for decision in ("approve", "reject"):
         review = sub.add_parser(decision, help=f"先记录本地 {decision}；approve 在发送开关开启且有凭据时发送讨论区评论")
         review.add_argument("event_id")
@@ -62,7 +62,7 @@ def main() -> None:
         elif args.command == "enqueue":
             print_json(EventInbox(services.settings).enqueue(args.event))
         elif args.command == "watch":
-            print("本地值守已启动；等待事件文件，派一轮交互 Pi 后退出。Ctrl+C 停止等待。", flush=True)
+            print("本地值守已启动；等待 SQLite 队列事件，派一轮交互 Pi 后退出。Ctrl+C 停止等待。", flush=True)
             print_json(EventInbox(services.settings).run(once=args.once, interval=args.interval))
         else:
             print_json(services.approval.review(args.event_id, args.command, args.note))

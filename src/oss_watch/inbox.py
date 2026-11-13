@@ -1,10 +1,7 @@
-"""本地文件叫醒一轮交互 Pi；待拍板或异常时退出，队列留在磁盘。"""
+﻿"""SQLite 收件箱叫醒一轮交互 Pi；待拍板或异常时退出，事实始终落盘。"""
 from __future__ import annotations
 
-import json
-import os
 import time
-import uuid
 from pathlib import Path
 
 from .config import Settings
@@ -16,44 +13,30 @@ from .state import StateStore
 class EventInbox:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.store = StateStore(settings.state_path)
-        self.root = settings.state_path.parent / "inbox"
-        self.archive = settings.state_path.parent / "inbox-archive"
+        self.store = StateStore(settings.state_path, settings)
         self.pi = PiJudgment(settings)
 
     def enqueue(self, source: str | Path) -> dict:
         event = load_event(source, self.settings)
         with self.store.locked():
-            self.root.mkdir(parents=True, exist_ok=True)
-            path = self.root / (event["event_id"] + ".json")
-            if path.exists():
-                if load_event(path, self.settings) != event:
-                    raise ValueError("队列中相同事件 ID 的正文不同，拒绝覆盖")
-            else:
-                temporary = self.root / (uuid.uuid4().hex + ".tmp")
-                try:
-                    temporary.write_text(json.dumps(event, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
-                    os.replace(temporary, path)
-                finally:
-                    temporary.unlink(missing_ok=True)
-        return {"status": "queued", "event_id": event["event_id"], "path": str(path),
-                "message": "已投递；前台 watch 等待器将自动派一轮 Pi，待拍板时保留队列。"}
+            self.store.enqueue(event)
+        return {"status": "queued", "event_id": event["event_id"], "database": str(self.store.path),
+                "message": "已入队；运行中的 watch 会扫描到事件，已退出的 watch 需手动重启。"}
 
     def inspect(self) -> dict:
-        return {"inbox": str(self.root), "queued_files": [path.name for path in self.files()]}
+        events = self.events()
+        return {"inbox": str(self.store.path), "database": str(self.store.path),
+                "queued_events": [event["event_id"] for event in events],
+                "queued_files": [event["event_id"] + ".json" for event in events]}
 
-    def files(self) -> list[Path]:
-        return sorted(self.root.glob("*.json"))
+    def events(self) -> list[dict]:
+        queue = self.store.load()["queue"]
+        # 保留旧版按 <event_id>.json 文件名排序的顺序。
+        return [queue[key] for key in sorted(queue, key=lambda key: key + ".json")]
 
-    def _archive(self, path: Path, event: dict) -> None:
+    def _archive(self, event: dict) -> None:
         with self.store.locked():
-            if load_event(path, self.settings) != event:
-                raise ValueError("处理期间收件文件发生变化，保留文件等待人工核对")
-            self.archive.mkdir(parents=True, exist_ok=True)
-            destination = self.archive / (event["event_id"] + ".json")
-            if destination.exists() and load_event(destination, self.settings) != event:
-                raise ValueError("归档中相同事件 ID 正文不同，保留收件文件")
-            os.replace(path, destination)
+            self.store.archive(event)
 
     def run(self, *, once: bool = False, interval: float = 1.0) -> dict:
         if not 0.1 <= interval <= 60:
@@ -67,20 +50,17 @@ class EventInbox:
                     blocking = pending if pending else active["event"]
                     return {"status": "blocked", "blocking_event_id": blocking["event_id"],
                             **self.inspect(), "message": "已有待拍板或未完成轮次，等待器退出；先拍板或 pi --resume-round，再启动 watch。"}
-                paths = self.files()
-                if not paths:
+                events = self.events()
+                if not events:
                     if once:
                         return {"status": "idle", **self.inspect()}
                     time.sleep(interval)
                     continue
-                path = paths[0]
-                if path.is_symlink() or not path.resolve().is_relative_to(self.root.resolve()):
-                    raise ValueError("收件文件必须位于本地收件箱内，禁止符号链接")
-                event = load_event(path, self.settings)
+                event = events[0]
                 prepared = self.pi.prepare(event)
                 if prepared["status"] == "already_processed":
-                    self._archive(path, event)
+                    self._archive(event)
                     continue
                 result = self.pi.launch(prepared)
-                self._archive(path, event)
+                self._archive(event)
                 return {**result, **self.inspect(), "message": "一轮已停在审批门；等待器退出，其他事件留在收件箱。"}

@@ -16,12 +16,13 @@ from .events import DISCUSSIONS, validate_event
 class PiJudgment:
     def __init__(self, settings: Settings):
         self.settings = settings
-        self.store = StateStore(settings.state_path)
+        self.store = StateStore(settings.state_path, settings)
 
     def prepare(self, event: dict[str, Any], resume: bool = False) -> dict[str, Any]:
         validate_event(event, self.settings)
         with self.store.locked():
             state = self.store.load()
+            self.store.check_event(state, event)
             event_id = event["event_id"]
             if event_id in state["processed_events"]:
                 original = state["processed_events"][event_id].get("event")
@@ -43,8 +44,8 @@ class PiJudgment:
             if not prompt_path.resolve().is_relative_to(self.settings.runs_root.resolve()):
                 raise ValueError("事件产物目录不允许链接逃逸")
             self.store.write_artifact(prompt_path, self._prompt(event))
-            state["active_judgment"] = {"status": "judging", "event": event, "started_at": now_iso(), "prompt": str(prompt_path), "artifacts": {}}
-            self.store.save(state)
+            active = {"status": "judging", "event": event, "started_at": now_iso(), "prompt": str(prompt_path), "artifacts": {}}
+            self.store.start_judgment(active)
             return {"status": "judging", "event_id": event_id, "prompt": str(prompt_path)}
 
     @staticmethod

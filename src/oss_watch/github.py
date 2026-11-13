@@ -62,7 +62,7 @@ class GitHubReader:
         self._repository(repository)
         if type(number) is not int or number < 1:
             raise ValueError("编号必须为正整数")
-        state = StateStore(self.settings.state_path).load()
+        state = StateStore(self.settings.state_path, self.settings).load()
         active = state.get("active_judgment") or {}
         event = active.get("event", {})
         expected = "issues.opened" if key == "issue" else "pull_request.opened"

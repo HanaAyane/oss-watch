@@ -78,10 +78,5 @@ class ApprovalGate:
         if not path.resolve().is_relative_to(self.settings.runs_root.resolve()):
             raise ValueError("草稿路径不允许链接逃逸")
         self.store.write_artifact(path, body)
-        record = active if is_active else pending
-        record["artifacts"][kind] = str(path)
-        processed = state["processed_events"].get(event_id)
-        if processed is not None:
-            processed["artifacts"][kind] = str(path)
-        self.store.save(state)
+        self.store.record_draft(event_id, {kind: str(path)})
         return {"status": "judging" if is_active else "pending_approval", "delivery": "not-sent", "artifact": str(path), **metadata}

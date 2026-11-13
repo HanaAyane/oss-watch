@@ -7,6 +7,9 @@ import tempfile
 from dataclasses import replace
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
+from oss_watch.state import StateStore
+
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
 
@@ -58,7 +61,7 @@ async def main(state_root: Path, fixture: str) -> None:
             response = await session.call_tool("record_approval", {"event_id": arguments["event_id"], "decision": "approve", "note": "隔离测试，仅本地"})
             assert not response.isError, response
             assert json.loads(response.content[0].text)["delivery"] == "not-sent"
-            assert json.loads((state_root / "state.json").read_text(encoding="utf-8"))["pending_approval"] is None
+            assert StateStore(state_root / "oss-watch.sqlite").load()["pending_approval"] is None
             print(json.dumps({"mcp": "隔离 stdio 握手、全部工具清单、真实读取、草稿、判断提交、仅本地审批均通过", "event_type": event["type"], "tool_count": len(names)}, ensure_ascii=False, indent=2))
 
 
@@ -68,7 +71,7 @@ def serve(state_root: Path, fixture: str) -> None:
     from oss_watch.pi_judgment import PiJudgment
     from oss_watch.services import create_services
 
-    settings = replace(load_settings(), state_path=state_root / "state.json", runs_root=state_root / "runs")
+    settings = replace(load_settings(), state_path=state_root / "oss-watch.sqlite", runs_root=state_root / "runs")
     services = create_services(settings)
     event = services.workflow.load_event(str(settings.fixtures_root / fixture))
     PiJudgment(settings).prepare(event)

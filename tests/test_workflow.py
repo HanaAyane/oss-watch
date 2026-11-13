@@ -46,11 +46,11 @@ class WorkflowTests(unittest.TestCase):
             fixtures_root=self.settings.fixtures_root,
             github_enabled=False,
             delivery_mode="draft-only",
-            state_path=self.root / "var" / "state.json",
+            state_path=self.root / "var" / "oss-watch.sqlite",
             runs_root=self.root / "var" / "runs",
         )
         self.workflow = VersionWatchWorkflow(self.settings)
-        self.store = StateStore(self.settings.state_path)
+        self.store = StateStore(self.settings.state_path, self.settings)
         self.gate = ApprovalGate(self.settings, self.store)
         self.event = json.loads((PROJECT_ROOT / "fixtures" / "release-v0.3.0-rc.1.json").read_text(encoding="utf-8"))
         self.event["repository"] = "target"
@@ -110,15 +110,23 @@ class ToolTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="oss-watch-tool-test-")
         self.root = Path(self.temp.name)
-        (self.root / "src").mkdir()
-        (self.root / "src/a.ts").write_text("菜单标记\n", encoding="utf-8")
+        self.repo = self.root / "target"
+        (self.repo / "src").mkdir(parents=True)
+        (self.repo / "src/a.ts").write_text("菜单标记\n", encoding="utf-8")
         config = self.root / "config.json"
-        config.write_text(json.dumps({"schema_version": 1, "repositories": {"target": {"root": str(self.root), "github": "HanaAyane/dsh-reasoning-effort"}}, "delivery": {"mode": "draft-only"}}), encoding="utf-8")
-        with patch.dict(os.environ, {"OSS_WATCH_CONFIG": str(config), "OSS_WATCH_TARGET_ROOT": str(self.root), "OSS_WATCH_GITHUB": "0"}):
+        config.write_text(json.dumps({"schema_version": 1, "repositories": {"target": {"root": str(self.repo), "github": "HanaAyane/dsh-reasoning-effort"}}, "delivery": {"mode": "draft-only"}}), encoding="utf-8")
+        with patch.dict(os.environ, {"OSS_WATCH_CONFIG": str(config), "OSS_WATCH_TARGET_ROOT": str(self.repo), "OSS_WATCH_GITHUB": "0"}):
             self.settings = load_settings()
+        self.settings = replace(self.settings, state_path=self.root / "state" / "oss-watch.sqlite",
+                                runs_root=self.root / "state" / "runs")
+        self.before = {p.relative_to(self.repo): p.read_bytes() for p in self.repo.rglob("*") if p.is_file()}
 
     def tearDown(self) -> None:
-        self.temp.cleanup()
+        try:
+            self.assertEqual(self.before, {p.relative_to(self.repo): p.read_bytes()
+                                          for p in self.repo.rglob("*") if p.is_file()})
+        finally:
+            self.temp.cleanup()
 
     def test_read_search_and_path_fence(self) -> None:
         reader = RepositoryReader(self.settings)

@@ -16,12 +16,7 @@ class CommentDelivery:
         self.settings, self.store = settings, store
 
     def _update(self, event_id: str, **values) -> dict:
-        with self.store.locked():
-            state = self.store.load()
-            review = next(item for item in reversed(state["reviews"]) if item["event_id"] == event_id)
-            review.update(values)
-            self.store.save(state)
-            return {**review, "message": review["delivery_reason"] + "；补丁永远只保留本地草稿。"}
+        return self.store.update_review(event_id, values)
 
     def after_review(self, review: dict) -> dict:
         event_id = review["event_id"]
@@ -71,13 +66,11 @@ class CommentDelivery:
         repository = self.settings.repositories[event["repository"]].github
         endpoint = f"repos/{repository}/issues/{discussion_target(event)}/comments"
         # 先记录尝试再发出：断电、网络超时等结果不明时不自动重发，避免重复评论。
-        with self.store.locked():
-            state = self.store.load()
-            current = next(item for item in reversed(state["reviews"]) if item["event_id"] == event_id)
-            if current.get("delivery_attempted_at"):
-                return {**current, "message": "已尝试发送，不会自动重发；请核对讨论区。"}
-            current.update(delivery="sending", delivery_reason="已记录发送尝试，结果待确认", delivery_attempted_at=now_iso())
-            self.store.save(state)
+        claimed = self.store.update_review(event_id, {
+            "delivery": "sending", "delivery_reason": "已记录发送尝试，结果待确认",
+            "delivery_attempted_at": now_iso()}, claim_delivery=True)
+        if not claimed.pop("delivery_claimed", False):
+            return claimed
         try:
             sent = subprocess.run(["gh", "api", "--hostname", "github.com", "--method", "POST", endpoint, "--input", "-"],
                                   input=json.dumps({"body": body}, ensure_ascii=False),

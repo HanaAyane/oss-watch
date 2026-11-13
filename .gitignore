@@ -14,9 +14,16 @@ __pycache__/
 # 本地运行状态、草稿和隔离测试依赖，不进入版本库
 var/
 .test-deps/
+.test-pi-state-*/
+.test-cli-state-*/
 
 # 编辑器与系统
 .vscode/
 .idea/
 .DS_Store
 Thumbs.db
+
+# SQLite ???? WAL ?????????????
+*.sqlite
+*.sqlite-wal
+*.sqlite-shm
