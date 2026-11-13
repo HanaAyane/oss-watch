@@ -1,4 +1,4 @@
-"""第一期演示：基于发版契约与仓库源码的版本适配判断。"""
+"""固定规则对照与回归编排器；智能判断由 Pi 完成。"""
 from __future__ import annotations
 
 import json
@@ -40,6 +40,10 @@ class VersionWatchWorkflow:
             raise ValueError(f"仓库源码与本次适配检查的前提不符：{message}")
 
     def run(self, event: dict[str, Any]) -> dict[str, Any]:
+        with self.store.locked():
+            return self._run(event)
+
+    def _run(self, event: dict[str, Any]) -> dict[str, Any]:
         state = self.store.load()
         event_id = event["event_id"]
         if event_id in state["processed_events"]:
@@ -47,6 +51,8 @@ class VersionWatchWorkflow:
         if state.get("pending_approval") is not None:
             pending_id = state["pending_approval"]["event_id"]
             raise ValueError(f"事件 {pending_id} 仍在待拍板，请先 approve 或 reject，再处理新事件。")
+        if state.get("active_judgment") is not None:
+            raise ValueError("Pi 判断尚未结束，不能启动固定规则对照或新事件")
         repo_name = event["repository"]
         if repo_name not in self.settings.repositories:
             raise ValueError(f"未配置的被值守仓库：{repo_name}")

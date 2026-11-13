@@ -67,6 +67,13 @@ def register_tools(services: Services):
         return result(services.approval.inspect())
 
     @mcp.tool()
+    def submit_judgment(event_id: str, decision: str, reasons: list[str], evidence: list[dict[str, Any]],
+                        validation_required: list[str], confidence: str) -> str:
+        """提交 Pi 自己的结论，核对源码证据后停在 pending_approval；须先写两份草稿，绝不审批或发送。"""
+        from .pi_judgment import PiJudgment
+        return result(PiJudgment(services.settings).submit(event_id, decision, reasons, evidence, validation_required, confidence))
+
+    @mcp.tool()
     def record_approval(event_id: str, decision: str, note: str = "") -> str:
         """仅记录 approve/reject；第一期即使批准也不会外发。"""
         return result(services.state.review(event_id, decision, note))

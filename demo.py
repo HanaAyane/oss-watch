@@ -1,4 +1,4 @@
-"""无需安装依赖即可运行第一期演示。"""
+"""主入口 pi 调用本机智能判断；demo 保留为免依赖的固定规则对照。"""
 from pathlib import Path
 import sys
 
