@@ -1,0 +1,13 @@
+{
+  "schema_version": 1,
+  "repositories": {
+    "dsh-reasoning-effort": {
+      "root": "../../插件/dsh-reasoning-effort",
+      "github": "HanaAyane/dsh-reasoning-effort",
+      "writable": false
+    }
+  },
+  "delivery": {
+    "mode": "draft-only"
+  }
+}

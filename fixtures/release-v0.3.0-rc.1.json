@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "fixture": true,
+  "event_id": "demo-dsh-v0.3.0-rc.1",
+  "type": "release.published",
+  "source": "DeepSeek Harness",
+  "published_at": "2026-11-13T12:00:00+08:00",
+  "repository": "dsh-reasoning-effort",
+  "release": {
+    "tag": "v0.3.0-rc.1",
+    "name": "DeepSeek Harness 0.3.0-rc.1",
+    "url": "fixture://dsh/v0.3.0-rc.1",
+    "body": "## 模型选择器调整\n\n- 原生模型菜单改用组合式窗格。菜单根节点新增稳定的 `data-dsh-model-menu` 标记，原有无障碍标签的 locale key 从 `menu.aria` 调整为 `model.menuAria`。\n- 各窗格使用 `data-dsh-pane` 标记：`models`（模型列表）、`effort`（原生推理等级）、`actions`（模型操作）和 `session`（会话选项）。窗格允许按设置重排。\n- 模型主入口新增 `data-dsh-model-entry`。原生推理等级入口移至独立 `effort` 窗格，不再作为模型列表的第二个子节点。\n- Agent Teams 开关归入 `session` 窗格。插件不应覆盖该窗格，也不应把其他操作按钮当成推理等级入口。\n- 现有 React 组件包装和 `ModelDirectory.select` 请求结构保持不变。\n\n> 本文件是第一期演示用模拟发版，不是 DeepSeek Harness 官方公告。"
+  },
+  "compatibility": {
+    "contract": "dsh.native-model-menu/v1",
+    "menu_marker": "data-dsh-model-menu",
+    "aria_label_key": "model.menuAria",
+    "pane_marker": "data-dsh-pane",
+    "model_pane": "models",
+    "model_row_marker": "data-dsh-model-entry",
+    "effort_pane": "effort",
+    "session_pane": "session",
+    "effort_inside_model_pane": false,
+    "child_order_stable": false
+  }
+}

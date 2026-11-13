@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "oss-watch"
+version = "0.1.0"
+description = "开源值守：本地事件驱动的仓库维护助手"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = ["mcp>=1.26,<2"]
+
+[project.scripts]
+oss-watch = "oss_watch.cli:main"
+oss-watch-mcp = "oss_watch.mcp_server:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]

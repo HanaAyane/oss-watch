@@ -1,0 +1,14 @@
+{
+  "mcpServers": {
+    "oss-watch": {
+      "command": ".venv\\Scripts\\python.exe",
+      "args": ["-m", "oss_watch.mcp_server"],
+      "cwd": ".",
+      "exposure": "direct",
+      "toolExposure": { "record_approval": "hidden" },
+      "env": {
+        "OSS_WATCH_GITHUB": "0"
+      }
+    }
+  }
+}
