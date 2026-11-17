@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import sqlite3
+import time
 from contextlib import closing, contextmanager
 from datetime import datetime
 from pathlib import Path
@@ -16,9 +17,19 @@ def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def lock_owner(lock: Path) -> dict | None:
+    """读取锁内诊断信息；旧版空锁或损坏内容返回 None。"""
+    try:
+        owner = json.loads(lock.read_text(encoding="utf-8"))
+        return owner if isinstance(owner, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
 def empty_state() -> dict:
     return {"schema_version": 1, "processed_events": {}, "last_conclusion": None,
-            "pending_approval": None, "reviews": [], "queue": {}, "archived_events": {}, "events": {}}
+            "pending_approval": None, "reviews": [], "queue": {}, "archived_events": {}, "events": {},
+            "poll": {}}
 
 
 class StateStore:
@@ -34,8 +45,15 @@ class StateStore:
         try:
             descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError as error:
-            raise ValueError(f"状态正在写入或本轮 Pi 正在运行；若进程异常终止，请确认进程已退出后移走 {lock}") from error
+            owner = lock_owner(lock)
+            detail = f"（持有者 {owner}）" if owner else ""
+            raise ValueError(f"状态正在写入或本轮 Pi 正在运行{detail}；可用 doctor 诊断，确认进程已退出后移走 {lock}") from error
         try:
+            # 锁内容仅供诊断；写失败不影响互斥语义。
+            try:
+                os.write(descriptor, json.dumps({"pid": os.getpid(), "started_at": now_iso()}).encode("utf-8"))
+            except OSError:
+                pass
             os.close(descriptor)
             yield
         finally:
@@ -45,10 +63,14 @@ class StateStore:
     def _connection(self):
         self.path.parent.mkdir(parents=True, exist_ok=True)
         try:
-            with closing(sqlite3.connect(self.path, timeout=0, isolation_level=None)) as connection:
+            # 首开建库/迁移与并发读存在毫秒级窗口（CI 慢盘上必现）；短暂等待写锁，
+            # 超时仍立刻报错不悬挂。文件锁语义不变，进程级互斥仍由 locked() 保证。
+            with closing(sqlite3.connect(self.path, timeout=5, isolation_level=None)) as connection:
                 connection.row_factory = sqlite3.Row
-                connection.execute("PRAGMA journal_mode=WAL")
                 connection.execute("PRAGMA synchronous=FULL")
+                # journal_mode 切换需要独占锁且不受 busy timeout 保护：并发首开时另一
+                # 进程哪怕只持有毫秒级读事务也会让它立刻报锁。先建表（普通写，受
+                # timeout 保护），确认没有并发活动后再一次性切 WAL；已是 WAL 则跳过。
                 connection.execute("""CREATE TABLE IF NOT EXISTS facts (
                     id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL,
                     type TEXT NOT NULL, event_id TEXT, payload TEXT NOT NULL)""")
@@ -59,6 +81,19 @@ class StateStore:
                     BEGIN SELECT RAISE(ABORT, '事实日志禁止改写'); END""")
                 connection.execute("""CREATE TRIGGER IF NOT EXISTS facts_no_delete BEFORE DELETE ON facts
                     BEGIN SELECT RAISE(ABORT, '事实日志禁止删除'); END""")
+                if connection.execute("PRAGMA journal_mode").fetchone()[0].lower() != "wal":
+                    for _ in range(50):
+                        try:
+                            mode = connection.execute("PRAGMA journal_mode=WAL").fetchone()[0]
+                            if str(mode).lower() == "wal":
+                                break
+                        except sqlite3.OperationalError as error:
+                            if "lock" not in str(error) and "busy" not in str(error):
+                                raise
+                        # 并发连接占锁时 PRAGMA 返回 delete 或直接抛锁错误；短暂让位后重试。
+                        time.sleep(0.1)
+                    else:
+                        raise sqlite3.OperationalError("database is locked (WAL switch)")
                 if connection.execute("SELECT 1 FROM facts LIMIT 1").fetchone() is None:
                     connection.execute("BEGIN IMMEDIATE")
                     try:
@@ -70,7 +105,7 @@ class StateStore:
                         raise
                 yield connection
         except sqlite3.Error as error:
-            raise ValueError(f"本地事实库不可用（锁冲突请稍后重试，不会等待）：{error}") from error
+            raise ValueError(f"本地事实库不可用（锁冲突等待超时，请稍后重试）：{error}") from error
 
     @staticmethod
     def _append(connection, kind: str, payload: dict, event_id: str | None = None):
@@ -105,6 +140,12 @@ class StateStore:
             elif kind == "judgment_started":
                 state["events"][event_id] = data["event"]
                 state["active_judgment"] = data
+            elif kind == "judgment_timed_out":
+                active = state.get("active_judgment")
+                if active is None or (active.get("event") or {}).get("event_id") != event_id:
+                    raise ValueError("超时事实必须对应当前活动轮次")
+                active["timeouts"] = active.get("timeouts", 0) + 1
+                active["last_timeout"] = data
             elif kind == "draft_recorded":
                 for record in (state.get("active_judgment"), state.get("pending_approval"),
                                state["processed_events"].get(event_id)):
@@ -124,6 +165,8 @@ class StateStore:
             elif kind == "delivery_updated":
                 review = next(item for item in reversed(state["reviews"]) if item["event_id"] == event_id)
                 review.update(data)
+            elif kind == "poll_updated":
+                state["poll"][data["repository"]] = data
             else:
                 raise ValueError(f"未知事实类型：{kind}")
         return state
@@ -248,6 +291,19 @@ class StateStore:
             if state.get("active_judgment") or state["pending_approval"] or event["event_id"] in state["processed_events"]:
                 raise ValueError("已有活动、待拍板或已处理轮次")
             self._append(connection, "judgment_started", active, event["event_id"])
+
+    def record_poll(self, data: dict) -> None:
+        """记录一次轮询结果：成功推进水位，失败只记尝试时间用于退避。"""
+        with self._transaction() as (connection, state):
+            self._append(connection, "poll_updated", data)
+
+    def record_timeout(self, event_id: str, timeout_seconds: int) -> None:
+        with self._transaction() as (connection, state):
+            active = state.get("active_judgment")
+            if active is None or active["event"]["event_id"] != event_id:
+                raise ValueError("只能记录当前活动轮次的超时")
+            self._append(connection, "judgment_timed_out",
+                         {"timeout_seconds": timeout_seconds, "at": now_iso()}, event_id)
 
     def record_draft(self, event_id: str, artifacts: dict) -> None:
         with self._transaction() as (connection, state):

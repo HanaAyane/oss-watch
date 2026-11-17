@@ -100,7 +100,7 @@ class PiJudgmentTests(unittest.TestCase):
              patch("oss_watch.pi_judgment.subprocess.run") as run:
             run.return_value.returncode = 0
             with self.assertRaisesRegex(ValueError, "未完成"):
-                self.pi.launch(prepared)
+                self.pi.launch(prepared, interactive=True)
             args = run.call_args.args[0]
             self.assertNotIn("-p", args)
             self.assertIn("--approve", args)
@@ -132,7 +132,7 @@ class PiJudgmentTests(unittest.TestCase):
             return SimpleNamespace(returncode=0)
         with patch("oss_watch.pi_judgment.shutil.which", return_value="pi.cmd"), \
              patch("oss_watch.pi_judgment.subprocess.run", side_effect=complete):
-            self.assertEqual(self.pi.launch(prepared)["status"], "pending_approval")
+            self.assertEqual(self.pi.launch(prepared, interactive=True)["status"], "pending_approval")
         with patch("oss_watch.pi_judgment.subprocess.run") as run:
             self.assertEqual(self.pi.launch(self.pi.prepare(self.event))["status"], "already_processed")
             run.assert_not_called()

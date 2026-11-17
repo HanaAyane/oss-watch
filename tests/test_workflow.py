@@ -25,8 +25,13 @@ from oss_watch.workflow import VersionWatchWorkflow
 class WorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="oss-watch-test-")
-        with patch.dict(os.environ, {"OSS_WATCH_CONFIG": str(PROJECT_ROOT / "config" / "watch.json"), "OSS_WATCH_TARGET_ROOT": str(PROJECT_ROOT.parent / "插件" / "dsh-reasoning-effort")}, clear=False):
-            source_root = load_settings().repositories["dsh-reasoning-effort"].root
+        # 默认用随仓库分发的最小副本，clone 即可全量测试；
+        # 显式设 OSS_WATCH_TEST_REAL_REPO=1 才改用 config/watch.json 指向的真实仓库。
+        if os.environ.get("OSS_WATCH_TEST_REAL_REPO") == "1":
+            with patch.dict(os.environ, {"OSS_WATCH_CONFIG": str(PROJECT_ROOT / "config" / "watch.json")}, clear=False):
+                source_root = load_settings().repositories["dsh-reasoning-effort"].root
+        else:
+            source_root = PROJECT_ROOT / "fixtures" / "target-repo"
         self.root = Path(self.temp.name)
         self.repo = self.root / "target"
         self.repo.mkdir()
@@ -57,6 +62,12 @@ class WorkflowTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.env.stop()
+        # 关闭指向临时目录的日志句柄，否则 Windows 上无法清理。
+        import logging
+        logger = logging.getLogger("oss_watch")
+        for handler in logger.handlers[:]:
+            handler.close()
+            logger.removeHandler(handler)
         self.temp.cleanup()
 
     def test_real_source_produces_pending_review_and_drafts(self) -> None:
@@ -137,6 +148,26 @@ class ToolTests(unittest.TestCase):
                 reader.read("target", path)
         with self.assertRaises(ValueError):
             safe_event_id("../escape")
+
+    def test_hidden_files_and_excluded_dirs_are_not_readable_or_searchable(self) -> None:
+        # 隐藏文件可能含密钥；排除目录里放哨兵，验证读取拒绝且检索不下降。
+        (self.repo / ".env").write_text("SECRET=哨兵\n", encoding="utf-8")
+        (self.repo / "src" / ".secret.ts").write_text("哨兵\n", encoding="utf-8")
+        (self.repo / ".config").mkdir()
+        (self.repo / ".config" / "a.ts").write_text("哨兵\n", encoding="utf-8")
+        for name in ("node_modules", "lib", "dist", "build", "coverage"):
+            (self.repo / name).mkdir()
+            (self.repo / name / "a.ts").write_text("哨兵\n", encoding="utf-8")
+        reader = RepositoryReader(self.settings)
+        for path in (".env", "src/.secret.ts", ".config/a.ts", "node_modules/a.ts", "build/a.ts", "coverage/a.ts"):
+            with self.assertRaises(ValueError):
+                reader.read("target", path)
+        result = reader.search("target", "哨兵", glob="*.ts")
+        self.assertEqual(result["matches"], [])
+        self.assertFalse(result["truncated"])
+        self.assertEqual(reader.search("target", "哨兵", glob="*")["matches"], [])
+        # 哨兵文件纳入基线，tearDown 的「仓库未被写入」比对仍然成立。
+        self.before = {p.relative_to(self.repo): p.read_bytes() for p in self.repo.rglob("*") if p.is_file()}
 
     def test_github_is_opt_in(self) -> None:
         with self.assertRaises(PermissionError):

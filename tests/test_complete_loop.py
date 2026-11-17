@@ -45,7 +45,7 @@ class CompleteLoopTests(unittest.TestCase):
         path.write_text(json.dumps(event, ensure_ascii=False), encoding="utf-8-sig")
         return path
 
-    def complete(self, prepared=None):
+    def complete(self, prepared=None, **kwargs):
         event = self.store.load()["active_judgment"]["event"]
         event_id = event["event_id"]
         self.gate.draft_comment(event_id, "target", None, "中文回复草稿：请补充浏览器和视口。\n")
@@ -221,6 +221,25 @@ class CompleteLoopTests(unittest.TestCase):
                 self.sender().review(self.event["event_id"], "approve", "重复")
         self.assertEqual(len(calls), 2)
 
+    def test_legacy_review_without_comment_artifact_fails_closed(self):
+        # 模拟迁移来的旧轮次：真实审批已落库，但记录里没有评论产物键。
+        self.pending(fixture=False)
+        review = self.gate.review(self.event["event_id"], "approve", "旧记录")
+        artifacts = dict(review["artifacts"])
+        artifacts.pop("comment")
+        legacy = {**review, "artifacts": artifacts}
+        with patch("oss_watch.delivery.subprocess.run") as run:
+            result = CommentDelivery(replace(self.settings, send_comments=True), self.store).after_review(legacy)
+            self.assertIn("草稿校验失败", result["delivery_reason"])
+            run.assert_not_called()
+
+    def test_queue_order_follows_enqueue_facts_not_event_id(self):
+        for event_id in ("z-first", "a-second"):
+            event = copy.deepcopy(self.event)
+            event["event_id"] = event_id
+            self.inbox.enqueue(self.file(event))
+        self.assertEqual([event["event_id"] for event in self.inbox.events()], ["z-first", "a-second"])
+
     def test_changed_draft_is_not_sent(self):
         self.pending(fixture=False)
         pending = self.store.load()["pending_approval"]
@@ -273,12 +292,13 @@ class CompleteLoopTests(unittest.TestCase):
         self.event["fixture"] = False
         prepared = self.pi.prepare(self.event)
         enabled = PiJudgment(replace(self.settings, github_enabled=True, send_comments=True))
+        process = SimpleNamespace(pid=1, wait=lambda timeout=None: 1)
         with patch("oss_watch.pi_judgment.shutil.which", return_value="pi.cmd"), \
-             patch("oss_watch.pi_judgment.subprocess.run", return_value=SimpleNamespace(returncode=1)) as run:
+             patch("oss_watch.pi_judgment.subprocess.Popen", return_value=process) as popen:
             with self.assertRaises(ValueError):
                 enabled.launch(prepared)
-            self.assertEqual(run.call_args.kwargs["env"]["OSS_WATCH_GITHUB"], "1")
-            self.assertEqual(run.call_args.kwargs["env"]["OSS_WATCH_SEND_COMMENTS"], "0")
+            self.assertEqual(popen.call_args.kwargs["env"]["OSS_WATCH_GITHUB"], "1")
+            self.assertEqual(popen.call_args.kwargs["env"]["OSS_WATCH_SEND_COMMENTS"], "0")
 
     def test_config_rejects_writable_targets_and_state_overlap(self):
         config = self.root / "config.json"
