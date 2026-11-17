@@ -27,7 +27,8 @@ class ApprovalGate:
                 "active_judgment": active, "active_drafts": drafts, "pending_approval": state.get("pending_approval"),
                 "last_conclusion": state.get("last_conclusion"),
                 "processed_events": {key: value["status"] for key, value in state["processed_events"].items()},
-                "reviews": state.get("reviews", [])[-20:]}
+                "reviews": state.get("reviews", [])[-20:],
+                "poll": state.get("poll", {})}
 
     def draft_comment(self, event_id: str, repository: str, target_number: int | None, body: str) -> dict:
         if (target_number is not None and target_number < 1) or not body.strip():

@@ -69,6 +69,9 @@ class PollerTests(unittest.TestCase):
         record = self.store.load()["poll"]["target"]
         self.assertTrue(record["ok"])
         self.assertEqual(record["cursor"], "2026-11-17T02:00:00Z")
+        # status 暴露每仓库轮询进度，供排障核对到期与失败原因。
+        from oss_watch.approval import ApprovalGate
+        self.assertEqual(ApprovalGate(self.settings, self.store).inspect()["poll"]["target"], record)
 
     def test_second_poll_is_idempotent_and_skips_old_and_bots(self):
         with patch.object(self.poller.github, "_call_path",

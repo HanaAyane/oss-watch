@@ -19,6 +19,9 @@ async def main(state_root: Path, fixture: str) -> None:
     env = dict(os.environ)
     env["PYTHONPATH"] = os.pathsep.join(filter(None, [str(root / "src"), os.environ.get("PYTHONPATH", "")]))
     env["OSS_WATCH_CONFIG"] = str(root / "config" / "watch.json")
+    # 默认用随仓库分发的最小副本，clone 即可冒烟；OSS_WATCH_TEST_REAL_REPO=1 才读真实仓库。
+    if os.environ.get("OSS_WATCH_TEST_REAL_REPO") != "1":
+        env["OSS_WATCH_TARGET_ROOT"] = str(root / "fixtures" / "target-repo")
     env["OSS_WATCH_GITHUB"] = "0"
     event = json.loads((root / "fixtures" / fixture).read_text(encoding="utf-8"))
     event_id = event["event_id"]

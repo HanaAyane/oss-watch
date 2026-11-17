@@ -25,8 +25,13 @@ from oss_watch.workflow import VersionWatchWorkflow
 class WorkflowTests(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory(prefix="oss-watch-test-")
-        with patch.dict(os.environ, {"OSS_WATCH_CONFIG": str(PROJECT_ROOT / "config" / "watch.json"), "OSS_WATCH_TARGET_ROOT": str(PROJECT_ROOT.parent / "插件" / "dsh-reasoning-effort")}, clear=False):
-            source_root = load_settings().repositories["dsh-reasoning-effort"].root
+        # 默认用随仓库分发的最小副本，clone 即可全量测试；
+        # 显式设 OSS_WATCH_TEST_REAL_REPO=1 才改用 config/watch.json 指向的真实仓库。
+        if os.environ.get("OSS_WATCH_TEST_REAL_REPO") == "1":
+            with patch.dict(os.environ, {"OSS_WATCH_CONFIG": str(PROJECT_ROOT / "config" / "watch.json")}, clear=False):
+                source_root = load_settings().repositories["dsh-reasoning-effort"].root
+        else:
+            source_root = PROJECT_ROOT / "fixtures" / "target-repo"
         self.root = Path(self.temp.name)
         self.repo = self.root / "target"
         self.repo.mkdir()
