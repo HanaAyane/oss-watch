@@ -27,7 +27,8 @@ def lock_owner(lock: Path) -> dict | None:
 
 def empty_state() -> dict:
     return {"schema_version": 1, "processed_events": {}, "last_conclusion": None,
-            "pending_approval": None, "reviews": [], "queue": {}, "archived_events": {}, "events": {}}
+            "pending_approval": None, "reviews": [], "queue": {}, "archived_events": {}, "events": {},
+            "poll": {}}
 
 
 class StateStore:
@@ -146,6 +147,8 @@ class StateStore:
             elif kind == "delivery_updated":
                 review = next(item for item in reversed(state["reviews"]) if item["event_id"] == event_id)
                 review.update(data)
+            elif kind == "poll_updated":
+                state["poll"][data["repository"]] = data
             else:
                 raise ValueError(f"未知事实类型：{kind}")
         return state
@@ -270,6 +273,11 @@ class StateStore:
             if state.get("active_judgment") or state["pending_approval"] or event["event_id"] in state["processed_events"]:
                 raise ValueError("已有活动、待拍板或已处理轮次")
             self._append(connection, "judgment_started", active, event["event_id"])
+
+    def record_poll(self, data: dict) -> None:
+        """记录一次轮询结果：成功推进水位，失败只记尝试时间用于退避。"""
+        with self._transaction() as (connection, state):
+            self._append(connection, "poll_updated", data)
 
     def record_timeout(self, event_id: str, timeout_seconds: int) -> None:
         with self._transaction() as (connection, state):

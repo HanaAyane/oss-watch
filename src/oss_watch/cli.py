@@ -35,6 +35,12 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--interval", type=float, default=1.0, help="收件箱扫描间隔（秒）")
     watch.add_argument("--interactive", action="store_true", help="本轮进入交互 TUI 而非 headless")
     sub.add_parser("doctor", help="诊断状态目录中的锁：持有进程是否存活；只报告不删锁")
+    poll = sub.add_parser("poll", help="按各仓库配置的频率只读拉取 GitHub 新事件并入队；需要 OSS_WATCH_GITHUB=1")
+    poll.add_argument("--once", action="store_true", help="扫描一轮到期仓库后退出（默认行为，供任务计划调用）")
+    poll.add_argument("--loop", action="store_true", help="持续按 tick 心跳扫描，替代任务计划")
+    poll.add_argument("--tick", type=float, default=60.0, help="loop 模式心跳间隔秒数（60–3600）")
+    poll.add_argument("--repo", help="只处理指定白名单别名")
+    poll.add_argument("--force", action="store_true", help="忽略间隔与 enabled 立即拉取（补拉/验收用）")
     for decision in ("approve", "reject"):
         review = sub.add_parser(decision, help=f"先记录本地 {decision}；approve 在发送开关开启且有凭据时发送讨论区评论")
         review.add_argument("event_id")
@@ -74,6 +80,9 @@ def main() -> None:
             print_json(EventInbox(services.settings).run(once=args.once, interval=args.interval, interactive=args.interactive))
         elif args.command == "doctor":
             print_json(inspect_locks(services.settings))
+        elif args.command == "poll":
+            from .poller import EventPoller
+            print_json(EventPoller(services.settings).poll(once=not args.loop, repo=args.repo, force=args.force, tick=args.tick))
         else:
             result = services.approval.review(args.event_id, args.command, args.note)
             logger.info("人工拍板 event=%s decision=%s delivery=%s", args.event_id, args.command, result.get("delivery"))

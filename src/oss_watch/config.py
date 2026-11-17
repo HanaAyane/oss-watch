@@ -32,6 +32,8 @@ class Repository:
     root: Path
     github: str
     writable: bool
+    poll_interval_seconds: int = 1800
+    poll_enabled: bool = True
 
 
 @dataclass(frozen=True)
@@ -76,7 +78,16 @@ def load_settings() -> Settings:
             raise ValueError(f"只读仓库目录不存在：{root}")
         if item.get("writable") is True:
             raise ValueError("被值守仓库必须只读，禁止 writable: true")
-        repositories[name] = Repository(name, root, github, False)
+        poll = item.get("poll", {})
+        if not isinstance(poll, dict):
+            raise ValueError(f"仓库 {name} 的 poll 配置必须是对象")
+        interval = poll.get("interval_seconds", 1800)
+        if type(interval) is not int or not 60 <= interval <= 2_592_000:
+            raise ValueError(f"仓库 {name} 的 poll.interval_seconds 必须是 60 秒到 30 天的整数")
+        poll_enabled = poll.get("enabled", True)
+        if type(poll_enabled) is not bool:
+            raise ValueError(f"仓库 {name} 的 poll.enabled 必须为布尔值")
+        repositories[name] = Repository(name, root, github, False, interval, poll_enabled)
     delivery_mode = data.get("delivery", {}).get("mode", "draft-only")
     if delivery_mode != "draft-only":
         raise ValueError("第一期只支持 delivery.mode = draft-only")
