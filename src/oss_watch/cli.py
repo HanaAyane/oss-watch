@@ -34,6 +34,11 @@ def build_parser() -> argparse.ArgumentParser:
     watch.add_argument("--once", action="store_true", help="收件箱为空时立即退出")
     watch.add_argument("--interval", type=float, default=1.0, help="收件箱扫描间隔（秒）")
     watch.add_argument("--interactive", action="store_true", help="本轮进入交互 TUI 而非 headless")
+    watch.add_argument("--loop", action="store_true", help="常驻：待拍板时通知并等人拍板，拍板后自动接续下一条")
+    watch.add_argument("--no-notify", action="store_true", help="关闭 toast/响铃通知（日志仍记录）")
+    review = sub.add_parser("review", help="人类可读的待拍板审阅视图；只读，拍板仍走 approve/reject")
+    review.add_argument("--event", help="回看指定历史事件；默认当前待拍板")
+    review.add_argument("--open", action="store_true", help="用默认编辑器打开评论与补丁草稿")
     sub.add_parser("doctor", help="诊断状态目录中的锁：持有进程是否存活；只报告不删锁")
     poll = sub.add_parser("poll", help="按各仓库配置的频率只读拉取 GitHub 新事件并入队；需要 OSS_WATCH_GITHUB=1")
     poll.add_argument("--once", action="store_true", help="扫描一轮到期仓库后退出（默认行为，供任务计划调用）")
@@ -76,8 +81,14 @@ def main() -> None:
         elif args.command == "enqueue":
             print_json(EventInbox(services.settings).enqueue(args.event))
         elif args.command == "watch":
-            print("本地值守已启动；等待 SQLite 队列事件，派一轮 headless Pi 后退出。Ctrl+C 停止等待。", flush=True)
-            print_json(EventInbox(services.settings).run(once=args.once, interval=args.interval, interactive=args.interactive))
+            mode = "常驻循环" if args.loop else "派一轮后退出"
+            print(f"本地值守已启动（{mode}）；等待 SQLite 队列事件，headless Pi 判断。Ctrl+C 停止等待。", flush=True)
+            print_json(EventInbox(services.settings).run(once=args.once, interval=args.interval,
+                                                         interactive=args.interactive, loop=args.loop,
+                                                         notify=not args.no_notify))
+        elif args.command == "review":
+            from .review import render_review
+            print(render_review(services.settings, args.event, open_drafts=args.open))
         elif args.command == "doctor":
             print_json(inspect_locks(services.settings))
         elif args.command == "poll":
@@ -86,6 +97,9 @@ def main() -> None:
         else:
             result = services.approval.review(args.event_id, args.command, args.note)
             logger.info("人工拍板 event=%s decision=%s delivery=%s", args.event_id, args.command, result.get("delivery"))
+            if result.get("delivery") == "unknown":
+                from .notify import notify
+                notify("oss-watch 发送结果不明", f"{args.event_id} 请人工核对讨论区；不会自动重发")
             print_json(result)
     except KeyboardInterrupt:
         print("已停止；原事件和已有草稿保留，可用 status 查看。", file=sys.stderr)

@@ -37,9 +37,11 @@ class EventInbox:
         with self.store.locked():
             self.store.archive(event)
 
-    def run(self, *, once: bool = False, interval: float = 1.0, interactive: bool = False) -> dict:
+    def run(self, *, once: bool = False, interval: float = 1.0, interactive: bool = False,
+            loop: bool = False, notify: bool = True) -> dict:
         if not 0.1 <= interval <= 60:
             raise ValueError("扫描间隔必须在 0.1 到 60 秒之间")
+        notified: set[str] = set()
         with self.store.locked(".watch.lock"):
             while True:
                 state = self.store.load()
@@ -47,8 +49,14 @@ class EventInbox:
                 active = state.get("active_judgment")
                 if pending or active:
                     blocking = pending if pending else active["event"]
-                    return {"status": "blocked", "blocking_event_id": blocking["event_id"],
-                            **self.inspect(), "message": "已有待拍板或未完成轮次，等待器退出；先拍板或 pi --resume-round，再启动 watch。"}
+                    blocked = {"status": "blocked", "blocking_event_id": blocking["event_id"],
+                               **self.inspect(), "message": "已有待拍板或未完成轮次，等待器退出；先拍板或 pi --resume-round，再启动 watch。"}
+                    if not loop or active:
+                        # loop 只等人工拍板，不代接续未完成的判断。
+                        return blocked
+                    self._notify_pending(pending, notify, notified)
+                    time.sleep(interval)
+                    continue
                 events = self.events()
                 if not events:
                     if once:
@@ -60,6 +68,31 @@ class EventInbox:
                 if prepared["status"] == "already_processed":
                     self._archive(event)
                     continue
-                result = self.pi.launch(prepared, interactive=interactive)
+                try:
+                    result = self.pi.launch(prepared, interactive=interactive)
+                except ValueError:
+                    if not loop:
+                        raise
+                    # 判断失败/超时：事实与产物已保留，loop 停下等人接续，不空转重试烧 Token。
+                    self._notify_text("oss-watch 判断未完成", f"{event['event_id']} 需 pi --resume-round 接续", notify)
+                    return {"status": "needs-resume", "event_id": event["event_id"], **self.inspect(),
+                            "message": "本轮未完成；产物已保留，接续后重新启动 watch --loop。"}
                 self._archive(event)
-                return {**result, **self.inspect(), "message": "一轮已停在审批门；等待器退出，其他事件留在收件箱。"}
+                if not loop:
+                    return {**result, **self.inspect(), "message": "一轮已停在审批门；等待器退出，其他事件留在收件箱。"}
+                self._notify_pending(self.store.load().get("pending_approval"), notify, notified)
+                # 停在审批门等人；拍板事实出现后自动接续下一条。
+
+    def _notify_pending(self, pending: dict | None, enabled: bool, notified: set[str]) -> None:
+        if pending is None or pending["event_id"] in notified:
+            return
+        notified.add(pending["event_id"])
+        conclusion = pending.get("conclusion", {})
+        self._notify_text("oss-watch 待拍板", f"{pending['event_id']}：{conclusion.get('decision', '')}（review 查看草稿）", enabled)
+
+    @staticmethod
+    def _notify_text(title: str, message: str, enabled: bool) -> None:
+        if not enabled:
+            return
+        from .notify import notify
+        notify(title, message)

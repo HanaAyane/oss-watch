@@ -2,7 +2,7 @@
 本仓库实现了一个简单的Agent开发loop，一个以事件驱动的一轮值守loop
 # 开源值守
 
-本地事件叫醒一轮**本机交互 Pi**：通过 MCP 读取白名单仓库、定向搜索代码和历史，提出建议、写评论与补丁草稿，然后退出等人拍板。支持模拟发版、新 Issue 和 PR；不用向量库，不做通用问答，不依赖 Agent Autoloop 中台或其跟进 Issue 配方。
+本地事件（手动投递或按仓库频率轮询 GitHub）叫醒一轮**本机 headless Pi**：通过 MCP 读取白名单仓库、定向搜索代码和历史，提出建议、写评论与补丁草稿，然后通知你拍板。支持模拟发版、新 Issue 和 PR；不用向量库，不做通用问答，不依赖 Agent Autoloop 中台或其跟进 Issue 配方。
 
 **所有被值守仓库始终只读**，包括 `dsh-reasoning-effort` 和以后加入 `config/watch.json` 的任何项目。禁止改文件、应用补丁、提交、推送、创建修复分支或修复 PR；**版本补丁即使批准，也永远只留在 oss-watch 本地草稿中**。人工批准真实 Issue/PR 的评论后，只有显式开启发送开关并有本机凭据，才会发送一条讨论区评论。默认不发送，不自动合并。
 
@@ -22,7 +22,7 @@ python -m venv .venv
 
 ## 各组件构成
 
-整条链路是「本地收件箱 → watch 等待器 → 本机交互 Pi → MCP 读证据、写草稿 → 本地状态 → 人工审批 → 可选评论发送」。被值守仓库只提供源码和文档，GitHub 只读查询只补充线上信息；两者都不是补丁的写入目标。下面按当前代码说明每个组件由什么组成、怎样交接。
+整条链路是「poll 轮询 / enqueue 投递 → 本地收件箱 → watch 等待器（可 `--loop` 常驻）→ 本机 headless Pi → MCP 读证据、写草稿 → 本地状态 → toast 通知 → 人工审批（review / approve / reject）→ 可选评论发送」。被值守仓库只提供源码和文档，GitHub 只读查询只补充线上信息；两者都不是补丁的写入目标。下面按当前代码说明每个组件由什么组成、怎样交接。
 
 ### 1. 本地收件箱：保存尚未处理的事件
 
@@ -44,11 +44,13 @@ python -m venv .venv
 
 **Pi 默认以 headless（`-p --mode json`）运行**：输出写入 `runs/<event_id>/pi-output.jsonl` 与 `pi-stderr.log`，会话存 `runs/<event_id>/session/`，超过 `judgment.timeout_seconds`（默认 900 秒，`watch.json` 可配 30–7200）会按进程树终止并留下超时事实，之后用 `pi --resume-round` 接续。想观察或接管一轮时加 `--interactive` 进入交互 TUI。判断是否完成只看事实库中的待拍板记录，不解析模型输出。
 
-每次运行最多派出一个新事件的模型轮次，完成后归档事件并退出；遇到已处理事件只归档，不再启动模型。若已有 `pending_approval` 或未完成的 `active_judgment`，等待器返回 `blocked` 并退出，后续事件留在队列。待拍板时先审批，未完成时先用 `pi --resume-round` 接续，再重新运行 `watch`。它是本机前台等待器，不是常驻中台，也没有内置公网 Webhook、定时拉取或自动重启服务。
+默认每次运行最多派出一个新事件的模型轮次，完成后归档事件并退出；遇到已处理事件只归档，不再启动模型。若已有 `pending_approval` 或未完成的 `active_judgment`，等待器返回 `blocked` 并退出，后续事件留在队列。待拍板时先审批，未完成时先用 `pi --resume-round` 接续，再重新运行 `watch`。
 
-### 3. 本机交互 Pi：读证据并提出本轮建议
+加 `--loop` 则成为**本机常驻循环**：派一轮 → 停在待拍板并发通知 → 按 `--interval` 等待拍板事实出现 → 自动归档并接续下一条，队列空时继续等待。loop 只等待、**不代拍板**；判断失败或超时仍停下返回 `needs-resume`，等人接续后重新启动，不空转重试烧 Token。`--no-notify` 关闭通知（日志仍记录）。`Ctrl+C` 停止，`.watch.lock` 租约防止双开。它是本机前台/任务计划进程，不是公网中台，没有公网 Webhook 或自动重启服务。
 
-Pi 是本机已有的交互程序，由 `watch` 或 `python demo.py pi` 在当前终端拉起。启动器 `src/oss_watch/pi_judgment.py` 保存本轮事件和 `prompt.md`；项目级 `.pi/mcp.json` 连接 oss-watch MCP，`.pi/one-round.ts` 限制可调用工具，并在 `agent_settled` 时退出、关闭 MCP 子进程。本轮使用交互 TUI，不使用 `pi -p`；一轮结束后不持续等待新任务。
+### 3. 本机 Pi：读证据并提出本轮建议
+
+Pi 是本机已有的程序，由 `watch` 或 `python demo.py pi` 拉起。启动器 `src/oss_watch/pi_judgment.py` 保存本轮事件和 `prompt.md`；项目级 `.pi/mcp.json` 连接 oss-watch MCP，`.pi/one-round.ts` 限制可调用工具，并在 `agent_settled` 时退出、关闭 MCP 子进程。**默认 headless（`pi -p --mode json --session-dir`）**，输出与会话落盘到 `runs/<event_id>/`，超时由看门狗按进程树终止；加 `--interactive` 才进入可观察、可接管的交互 TUI。一轮结束后 Pi 退出，不持续等待新任务。
 
 Pi 负责搜索源码与历史、说明证据和不确定性、写评论与补丁草稿，再提交判断。启动参数只开放 `mcp__oss_watch__*`，显式排除 `record_approval`，扩展还会拦截越界工具调用。Pi 可以把轮次交到待拍板状态，**不能替人审批、打开发送开关或发送评论**。启动时的 `--approve` 只是信任项目配置，不是对本轮建议的业务批准。
 
@@ -83,7 +85,7 @@ MCP 由 `src/oss_watch/mcp_server.py` 注册工具，通过 `services.py` 组装
 
 ### 6. 审批门：由人按事件 ID 作决定
 
-审批由 CLI 的 `approve` / `reject`、`src/oss_watch/approval.py` 和 `state.py` 协作完成。人先用 `status` 核对待办并打开草稿，再执行 `python demo.py approve <event_id>` 或 `python demo.py reject <event_id>`；两条命令都必须带上当前待拍板的事件 ID，缺失、不匹配或重复审批会被拒绝。
+审批由 CLI 的 `approve` / `reject`、`src/oss_watch/approval.py` 和 `state.py` 协作完成。人先用 **`python demo.py review`** 阅读待拍板轮次（`src/oss_watch/review.py` 渲染结论、理由、源码证据、待验证项和产物路径，末尾给出填好 event_id 的拍板命令，复制即用；`--open` 用默认编辑器打开两份草稿，`--event <id>` 回看历史），或用 `status` 看原始 JSON。review **只读、不内嵌拍板动作**；再执行 `python demo.py approve <event_id>` 或 `python demo.py reject <event_id>`，两条命令都必须带上当前待拍板的事件 ID，缺失、不匹配或重复审批会被拒绝。
 
 审批先在 SQLite 事务中追加本地拍板事实，记录决定和备注、清除待拍板，再交给评论发送组件检查外发条件。它不重新生成草稿，不应用补丁，也不启动下一轮模型。拒绝会保留原产物；批准后的补丁仍为 `patch_delivery: local-only`。MCP 的 `record_approval` 只做本地记录，不连接这个发送步骤，而且不向本轮 Pi 开放。
 
@@ -95,7 +97,9 @@ MCP 由 `src/oss_watch/mcp_server.py` 注册工具，通过 `services.py` 组装
 
 ### 8. 可选 GitHub 读取与评论发送：两条独立通路
 
-只读通路由 `src/oss_watch/github.py` 和本机 `gh api` 组成，受 `OSS_WATCH_GITHUB=1` 控制，默认关闭。它向 MCP 返回 Release、Issue、PR 或历史搜索信息，不改变线上内容；匹配本轮的模拟 Issue/PR 则直接返回本地快照。交互启动器还会按事件类型收紧读取开关，具体限制见上面的工具表。
+只读通路由 `src/oss_watch/github.py` 和本机 `gh api` 组成，受 `OSS_WATCH_GITHUB=1` 控制，默认关闭。它向 MCP 返回 Release、Issue、PR 或历史搜索信息，不改变线上内容；匹配本轮的模拟 Issue/PR 则直接返回本地快照。判断启动器还会按事件类型收紧读取开关，具体限制见上面的工具表。
+
+线上事件进入本地队列靠 **`poll` 轮询器**（`src/oss_watch/poller.py`）：按各仓库在 `watch.json` 配置的 `poll.interval_seconds`（60 秒–30 天，默认 1800）与 `poll.enabled`，只读拉取新建 Issue/PR 与 Release，生成确定性事件 ID 走既有 `enqueue` 幂等入队。水位与轮询结果落为事实，失败退避且不推进水位；首次启用不回溯存量，跳过 bot。默认 `--once` 供任务计划每分钟心跳调用（到期才真正拉取），`--loop` 常驻按 `--tick` 心跳，`--repo` / `--force` 供定向补拉。需要 `OSS_WATCH_GITHUB=1` 与本机 `gh` 登录。
 
 发送通路由人工 CLI 审批和 `src/oss_watch/delivery.py` 组成，受独立的 `OSS_WATCH_SEND_COMMENTS=1` 控制，默认也关闭。只有首次人工批准真实 Issue/PR，且本机凭据、配置仓库、原事件目标与冻结的评论草稿都核验通过后，才尝试向该 Issue/PR 的讨论区发送一条评论。**拒绝、模拟事件和发版适配都不会发出**，也没有补丁发送、代码评审、创建修复 PR 或合并能力。
 
@@ -103,7 +107,7 @@ MCP 由 `src/oss_watch/mcp_server.py` 注册工具，通过 `services.py` 组装
 
 ## 一次完整演示
 
-这次只处理一条模拟 Issue：`fixtures/issue-menu-overflow.json`，事件 ID 为 `demo-issue-menu-overflow-20261113`。目标是走完「投递 → 本机 watch 拉起交互 Pi → 只读判断并写本地草稿 → 查看 → 人工拍板」，不是验证反馈中的问题已经复现。
+这次只处理一条模拟 Issue：`fixtures/issue-menu-overflow.json`，事件 ID 为 `demo-issue-menu-overflow-20261113`。目标是走完「投递 → 本机 watch 拉起 headless Pi → 只读判断并写本地草稿 → 查看 → 人工拍板」，不是验证反馈中的问题已经复现。
 
 ### 1. 准备两个终端
 
@@ -132,7 +136,7 @@ python demo.py watch
 屏幕会先显示：
 
 ```text
-本地值守已启动；等待 SQLite 队列事件，派一轮交互 Pi 后退出。Ctrl+C 停止等待。
+本地值守已启动（派一轮后退出）；等待 SQLite 队列事件，headless Pi 判断。Ctrl+C 停止等待。
 ```
 
 此时只是一个本机前台进程在扫描 `E:\code\oss-watch\var\readme-demo\oss-watch.sqlite` 中的队列，不是常驻中台。没有事件时不会启动模型、不会访问 GitHub；先让它保持等待，再去终端 B 投递。
@@ -149,7 +153,7 @@ python demo.py enqueue fixtures/issue-menu-overflow.json
 var/readme-demo/oss-watch.sqlite
 ```
 
-**`enqueue` 不会自动启动或唤醒一个已经退出的 `watch`**，它只把事件写入数据库。这次终端 A 已在扫描，所以会发现新事件、取队首并拉起一轮可交互 Pi。
+**`enqueue` 不会自动启动或唤醒一个已经退出的 `watch`**，它只把事件写入数据库。这次终端 A 已在扫描，所以会发现新事件、取队首并拉起一轮 headless Pi。
 
 ### 4. 观察终端 A：Pi 读取、判断、写草稿
 
@@ -159,9 +163,15 @@ var/readme-demo/oss-watch.sqlite
 
 正常完成时，Pi 会用草稿工具写出 `comment.md`（拟回复）和 `patch.md`（拟补丁，或无法可靠产出补丁的原因），再调用 `submit_judgment`，写出 `conclusion.json` 并停在 `pending_approval`。终端会显示结论摘要、产物路径及待拍板状态，具体建议由模型判断，不保证每次措辞相同。
 
-一轮结束后 Pi 和 `watch` 都会退出，终端 A 回到 PowerShell；等待人拍板期间不会空转烧 Token。**不用在 Pi 里找审批按钮**：`record_approval` 对本轮模型隐藏，人工拍板要用后面的 CLI 命令。如果没有完成提交，先按「常见问题」中的接续方式处理，不要当作已成功。
+一轮结束后 Pi 和默认模式的 `watch` 都会退出（`--loop` 则通知后原地等拍板），终端 A 回到 PowerShell；等待人拍板期间不会空转烧 Token。**不用在 Pi 里找审批按钮**：`record_approval` 对本轮模型隐藏，人工拍板要用后面的 CLI 命令。如果没有完成提交，先按「常见问题」中的接续方式处理，不要当作已成功。
 
-### 5. 终端 B：用 status 找到这次待办
+### 5. 终端 B：用 review 审阅、status 核对
+
+```powershell
+python demo.py review
+```
+
+`review` 给人读：渲染这轮的判断、理由、源码证据、待验证项和产物路径，末尾给出填好 event_id 的 `approve` / `reject` 命令，看完草稿复制执行即可；`review --open` 还会用默认编辑器打开评论与补丁草稿。它**只读**，不会顺手替你拍板。给脚本用的原始 JSON 仍是 `status`：
 
 ```powershell
 python demo.py status
@@ -203,7 +213,7 @@ python demo.py approve demo-issue-menu-overflow-20261113 --note "先保留本地
 python demo.py status
 ```
 
-现在 `pending_approval` 应为空，`processed_events` 中这条事件应为 `approved` 或 `rejected`，`reviews` 中会新增带相同事件 ID 和备注的审批记录。结论、评论和补丁文件仍在原处；批准不会自动启动下一轮 `watch`。
+现在 `pending_approval` 应为空，`processed_events` 中这条事件应为 `approved` 或 `rejected`，`reviews` 中会新增带相同事件 ID 和备注的审批记录。结论、评论和补丁文件仍在原处；默认模式的批准不会自动启动下一轮 `watch`，`watch --loop` 则会自动接续队列里的下一条。
 
 ### 9. 可选：继续下一条，并观察排队
 
@@ -268,7 +278,7 @@ python demo.py status
 
 ### 9. 如果想更自动，是不是必须让 watch 一直开着？
 
-如果希望等待期间事件一入队就处理，需要有 `watch` 正在跑；也可以投递后自己启动它。当前每次最多派一个新模型轮次，待拍板或未完成时会退出，不会一直循环替你处理和审批。自动重启、系统服务托管还没做，实际判断仍需要可交互的本机终端。
+默认 `watch` 每次最多派一个新模型轮次，待拍板或未完成时退出；想常驻就显式加 `watch --loop`：它停在待拍板发通知、等你拍板，拍板后自动接续下一条，队列空时继续等待，**不代拍板**。判断默认 headless，不需要盯着终端；配合任务计划（见「部署为常驻值守」）可以做到登录后自动值守。系统服务包装与崩溃自动重启没做。
 
 ### 10. watch 是哪个程序实现的？
 
@@ -284,7 +294,7 @@ python demo.py status
 
 ### 13. 最简单的投递器是不是定时拉 Issue/PR？一天一次可以吗，需要常驻服务吗？
 
-可以另写脚本定时拉取，转换成这里支持的事件，再调用 `enqueue`。能接受延迟就可以一天一次，用任务计划定时执行，不必常驻。**内置定时轮询器还没做**；脚本还要自己记录拉取进度、生成稳定的事件 ID 并处理重复。投递完成仍不会启动 `watch`，这一步需要另外安排。
+已内置：`python demo.py poll --once` 就是给任务计划用的轮询器，一天一次也可以——把该仓库 `watch.json` 里的 `poll.interval_seconds` 设成 `86400`，任务计划仍每分钟跑一次心跳，`poll` 只在到期时真正访问 GitHub。水位、去重和失败退避都由它自己记事实处理，不用另写脚本。需要 `OSS_WATCH_GITHUB=1`。入队后的处理由 `watch --loop` 接续；两者部署命令见「部署为常驻值守」。
 
 ### 14. 本地收件箱在哪？
 
@@ -324,7 +334,7 @@ python demo.py status
 
 ### 23. 已有待拍板时再跑 watch，为什么是 blocked？
 
-因为一次只允许一条待拍板或未完成判断，避免新事件覆盖你正在看的内容。`blocked` 会带上 `blocking_event_id`，队列仍保留。待拍板就先按 ID 批准或拒绝；未完成就先 `pi --resume-round`。处理完后要重新运行 `watch`。
+因为一次只允许一条待拍板或未完成判断，避免新事件覆盖你正在看的内容。`blocked` 会带上 `blocking_event_id`，队列仍保留。待拍板就先按 ID 批准或拒绝；未完成就先 `pi --resume-round`。处理完后要重新运行 `watch`。用 `watch --loop` 则不会因待拍板退出：它发一次通知后原地等你拍板，拍板事实出现即自动接续。
 
 ### 24. 批准时没开发送开关，以后再 approve 能补发吗？
 
@@ -355,10 +365,12 @@ python demo.py pi --resume-round
 | 命令 | 如何使用同一个事实库 |
 | --- | --- |
 | `enqueue` | 校验正文并追加入队事实；同 ID 同正文去重，正文冲突拒绝 |
-| `watch` | 扫描当前队列，认领一轮并记录开始判断；成功后追加归档事实 |
+| `watch` | 扫描当前队列，认领一轮并记录开始判断；成功后追加归档事实；`--loop` 等拍板事实出现后自动接续 |
+| `poll` | 按各仓库 `poll.interval_seconds` 拉取线上新事件并入队；水位与结果为 `poll_updated` 事实 |
 | `pi` / `demo` | 直接处理事件；提交判断时事务写入结论摘要、产物路径与待拍板记录 |
-| `status` / MCP `get_pending_approval` | 从事实重建当前视图，不调用模型，也不替人拍板 |
+| `review` / `status` / MCP `get_pending_approval` | 从事实重建当前视图，不调用模型，也不替人拍板；review 给人读，status 给脚本 |
 | `approve` / `reject` | 事务追加人工决定，解除待拍板；默认只留本地记录 |
+| `doctor` | 只读诊断三把锁的持有进程是否存活，不删锁 |
 
 **旧数据会一次迁移**：某状态目录的数据库不存在或事实表为空时，首次打开会校验并导入旧 `state.json`、`inbox/*.json` 和 `inbox-archive/*.json`，保留待拍板、未完成判断、已处理记录、队列及审批历史。同 ID 正文冲突、无效事件或链接逃逸会使整个导入回滚；修正备份来源后可重试空库。导入成功后旧文件原样保留，程序将它们视为只读备份，不再读取或改写；此后不要编辑旧 JSON 来改变运行状态。缺少可核验发送目标的旧轮次仍只能本地拍板。
 
@@ -370,9 +382,46 @@ $backup = Join-Path $env:TEMP ('oss-watch-var-' + (Get-Date -Format 'yyyyMMdd-HH
 Copy-Item -LiteralPath $stateDir -Destination $backup -Recurse
 ```
 
-持久化与进程常驻是两回事：日志留在磁盘上，`watch` 仍只派一轮并退出；新事件不会自动启动已退出的等待器。
+持久化与进程常驻是两回事：日志留在磁盘上，默认 `watch` 仍只派一轮并退出，新事件不会自动启动已退出的等待器；需要常驻时显式用 `watch --loop`（见下节）。
 
-本项目还没做公网 Webhook 接收端、内置定时轮询器或 Autoloop 中台。在线读取默认关闭，不启动公网监听、不要求暴露本机。
+本项目还没做公网 Webhook 接收端或 Autoloop 中台。在线读取默认关闭，不启动公网监听、不要求暴露本机。
+
+## 部署为常驻值守（Windows 任务计划）
+
+两条任务组成最小值守：**poll 心跳**每分钟醒来、按各仓库自己的频率拉取新事件入队；**daemon** 登录时启动 `watch --loop`，判断、通知、等你拍板、拍板后接续下一条。通知走 Windows toast（`src/oss_watch/notify.py`），失败静默降级为响铃加日志；通知只含事件 ID 与一句话状态，**不含评论正文**。进入待拍板、判断超时需接续、评论发送结果 `unknown` 三种情况会提醒你。
+
+先在 `config/watch.json` 给每个仓库设好频率，例如低频仓库一天一次：
+
+```json
+"dsh-reasoning-effort": {
+  "root": "../../插件/dsh-reasoning-effort",
+  "github": "HanaAyane/dsh-reasoning-effort",
+  "writable": false,
+  "poll": { "interval_seconds": 86400, "enabled": true }
+}
+```
+
+再手动注册两条任务（命令里的路径按你的实际安装位置改；先设好用户级环境变量 `OSS_WATCH_GITHUB=1`，任务计划才能继承）：
+
+```powershell
+schtasks /Create /TN "oss-watch-poll" /SC MINUTE /MO 1 /TR "'E:\code\oss-watch\.venv\Scripts\python.exe' 'E:\code\oss-watch\demo.py' poll --once" /F
+```
+
+```powershell
+schtasks /Create /TN "oss-watch-daemon" /SC ONLOGON /TR "'E:\code\oss-watch\.venv\Scripts\pythonw.exe' 'E:\code\oss-watch\demo.py' watch --loop" /F
+```
+
+`pythonw` 无窗口后台运行，流程节点写入 `<状态目录>/logs/oss-watch.log`（5MB×3 轮转，不记正文）。日常交互只有三步：收到 toast → `python demo.py review --open` 看草稿 → 复制执行 `approve` / `reject`；拍板后 daemon 自动处理下一条。判断失败或超时时 daemon 停下等人，用 `pi --resume-round` 接续后再启动。卸载：
+
+```powershell
+schtasks /Delete /TN "oss-watch-poll" /F
+```
+
+```powershell
+schtasks /Delete /TN "oss-watch-daemon" /F
+```
+
+不引入 NSSM 等服务包装；崩溃自动重启没做，异常后可用 `doctor` 诊断锁再手动重启。想临时前台观察，直接跑 `python demo.py watch --loop`，`Ctrl+C` 停止。
 
 ## 批准后可选发评论
 
@@ -394,7 +443,7 @@ Remove-Item Env:OSS_WATCH_SEND_COMMENTS
 
 成功后记录 `delivery: sent` 和评论链接；请求前先落盘发送尝试。如果网络超时、进程中断或回执异常，可能为 `unknown` 或留下 `sending`，**不会自动重发**。请人工核对讨论区，保留原记录。重复 `approve` 会被拒绝；当前没有延后发送或自动重试命令。开关应在首次审批前开启。
 
-GitHub **在线读取**由独立的 `OSS_WATCH_GITHUB=1` 控制，默认 `0`。发版主演示及所有模拟事件强制关闭在线读取；真实 Issue/PR 的交互轮次只有显式开启后才允许查询 GitHub，需自行配置 `gh`。项目 MCP 继承启动器的读取开关，发送开关始终强制为 `0`。模拟工具读取无需网络，没有内置 GitHub 轮询器。
+GitHub **在线读取**由独立的 `OSS_WATCH_GITHUB=1` 控制，默认 `0`。发版主演示及所有模拟事件强制关闭在线读取；真实 Issue/PR 的交互轮次只有显式开启后才允许查询 GitHub，需自行配置 `gh`。项目 MCP 继承启动器的读取开关，发送开关始终强制为 `0`。模拟工具读取无需网络；`poll` 轮询器复用这条只读通路，同样受此开关控制。
 
 ## 直接演示与 MCP
 
@@ -442,6 +491,6 @@ $piPackage = Join-Path (Split-Path (Get-Command pi).Source) 'node_modules/@earen
 node tests/pi_smoke.mjs $piPackage
 ```
 
-单元测试使用临时目标源码副本，覆盖规则回归、Issue/PR 快照与证据提交、草稿冻结、队列事实唤醒、排队阻塞、异常接续、去重及冲突、并发租约、先审批后发送、开关/凭据缺失、模拟与版本适配禁止发送、正文篡改、发送不确定时不重试，以及事实查询与重建、只追加约束、旧状态/队列/归档迁移、冲突回滚和数据库锁冲突。闭环与事实日志测试逐项检查目标副本内容未变化。发送测试用替身，不向真实讨论区发评论。
+单元测试使用临时目标源码副本，覆盖规则回归、Issue/PR 快照与证据提交、草稿冻结、队列事实唤醒、排队阻塞、异常接续、去重及冲突、并发租约、先审批后发送、开关/凭据缺失、模拟与版本适配禁止发送、正文篡改、发送不确定时不重试，事实查询与重建、只追加约束、旧状态/队列/归档迁移、冲突回滚和数据库锁冲突，以及 headless 启动参数与超时接续、锁持有者诊断、按仓库频率的到期/退避/幂等轮询、loop 拍板后自动接续与失败即停、通知去重与降级、review 只读渲染。闭环与事实日志测试逐项检查目标副本内容未变化。发送测试用替身，不向真实讨论区发评论。
 
 MCP 冒烟真实启动 stdio，在隔离状态目录调用工具并走到本地审批；Pi SDK 探针验证项目配置、工具限制和退出扩展，不调用模型、不改全局配置。它们与单元测试**不等于真实模型判断验收**。完整交互验收请在本机终端按「一次完整演示」执行，观察 Pi 的真实读取、草稿和 `pending_approval`，再人工核对结论。运行产物、草稿与状态都在忽略的 `var/` 中。
