@@ -38,6 +38,10 @@ def notify(title: str, message: str) -> str:
             return "toast"
     except (OSError, subprocess.TimeoutExpired):
         pass
-    print(f"\a[oss-watch] {title} — {message}", flush=True)
+    try:
+        print(f"\a[oss-watch] {title} — {message}", flush=True)
+    except UnicodeEncodeError:
+        # 旧代码页控制台打不出中文时退回 ASCII 提示；完整文案已在日志里。
+        print("\a[oss-watch] pending review; see logs/oss-watch.log", flush=True)
     logger.info("通知降级(bell) %s", title)
     return "bell"

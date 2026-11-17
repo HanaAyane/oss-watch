@@ -94,6 +94,16 @@ class DaemonReviewTests(unittest.TestCase):
         payload = jsonlib.loads(base64.b64decode(re.search(r"FromBase64String\('([^']+)'\)", script).group(1)))
         self.assertEqual(payload, {"title": "标题 有空格", "message": "内容：needs_info（review 查看草稿）"})
 
+    def test_bell_fallback_survives_legacy_codepage_console(self):
+        # CI/任务计划的控制台可能是 cp1252；响铃兜底不得因中文编码失败而崩溃。
+        import io
+        legacy = io.TextIOWrapper(io.BytesIO(), encoding="cp1252")
+        with patch("oss_watch.notify.subprocess.run", return_value=SimpleNamespace(returncode=1)), \
+             patch("sys.stdout", legacy):
+            self.assertEqual(notify("标题", "内容"), "bell")
+        legacy.buffer.seek(0)
+        self.assertIn(b"[oss-watch]", legacy.buffer.read())
+
     def test_notify_falls_back_to_bell_when_toast_fails(self):
         with patch("oss_watch.notify.subprocess.run", return_value=SimpleNamespace(returncode=1)):
             self.assertEqual(notify("标题", "内容"), "bell")

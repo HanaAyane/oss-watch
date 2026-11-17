@@ -8,7 +8,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-PROJECT_ROOT = Path(__file__).resolve().parents[2]
+# CI/任务计划的 TEMP 可能是 8.3 短路径（RUNNER~1），与 resolve 后的长路径不同形；
+# 比较前两侧都取 resolve，避免把合法的项目内目录误判为越界。
+PROJECT_ROOT = Path(__file__).resolve().parents[2].resolve()
 
 
 def load_local_env() -> None:
@@ -98,7 +100,9 @@ def load_settings() -> Settings:
     if type(timeout) is not int or not 30 <= timeout <= 7200:
         raise ValueError("judgment.timeout_seconds 必须是 30–7200 的整数秒")
     var_root = Path(os.environ.get("OSS_WATCH_VAR", PROJECT_ROOT / "var")).expanduser().resolve()
-    if not var_root.is_relative_to(PROJECT_ROOT) or var_root == PROJECT_ROOT:
+    # 比较用运行时 resolve：TEMP 为 8.3 短路径时，模块级 PROJECT_ROOT 可能与解析后不同形。
+    project_root = PROJECT_ROOT.resolve()
+    if not var_root.is_relative_to(project_root) or var_root == project_root:
         raise ValueError("OSS_WATCH_VAR 必须是 oss-watch 项目内的子目录")
     for repository in repositories.values():
         if var_root.is_relative_to(repository.root) or repository.root.is_relative_to(var_root):

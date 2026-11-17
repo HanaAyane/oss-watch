@@ -220,6 +220,23 @@ class FactLogTests(unittest.TestCase):
                 self.assertEqual(cli("status")["reviews"][-1]["decision"], decision)
             self.assertFalse((state_root / "state.json").exists())
 
+    def test_short_8_3_project_path_is_not_mistaken_for_escape(self):
+        # CI 的 TEMP 是 RUNNER~1 这类 8.3 短路径；resolve 展开后与未解析的项目根不同形，
+        # 曾把合法的项目内状态目录误判为越界。这里用 GetShortPathName 构造同形输入。
+        import ctypes
+        project = self.root / "project"
+        state = project / "isolated"
+        state.mkdir(parents=True)
+        buffer = ctypes.create_unicode_buffer(600)
+        ctypes.windll.kernel32.GetShortPathNameW(str(self.root), buffer, 600)
+        short_root = Path(buffer.value)
+        config = self.root / "config.json"
+        with patch("oss_watch.config.PROJECT_ROOT", short_root / "project"), \
+             patch.dict("os.environ", {"OSS_WATCH_VAR": str(short_root / "project" / "isolated"),
+                                       "OSS_WATCH_CONFIG": str(config)}):
+            settings = load_settings()
+        self.assertEqual(settings.state_path, state.resolve() / "oss-watch.sqlite")
+
     def test_database_and_wal_resolved_escape_is_rejected_by_configuration(self):
         project = self.root / "project"
         state = project / "isolated"

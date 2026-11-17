@@ -82,6 +82,10 @@ def serve(state_root: Path, fixture: str) -> None:
 
 
 if __name__ == "__main__":
+    # CI 控制台可能是 cp1252；中文总结不因旧代码页而崩溃。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     if len(sys.argv) == 4 and sys.argv[1] == "--serve":
         serve(Path(sys.argv[2]), sys.argv[3])
     else:

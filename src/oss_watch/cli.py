@@ -54,6 +54,11 @@ def build_parser() -> argparse.ArgumentParser:
 
 
 def main() -> None:
+    # 输出全是中文 JSON；控制台编码是 cp1252 等旧代码页时（CI、任务计划）print 会抛
+    # UnicodeEncodeError，统一改为替换不可编码字符，不影响管道与文件里的 UTF-8。
+    for stream in (sys.stdout, sys.stderr):
+        if hasattr(stream, "reconfigure"):
+            stream.reconfigure(errors="replace")
     args = build_parser().parse_args()
     try:
         services = create_services()
