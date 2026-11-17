@@ -41,9 +41,12 @@ class CommentDelivery:
 
         # 使用批准时冻结的正文及事件目标，绝不相信模型生成的 URL 或草稿目标参数。
         safe_event_id(event_id)
-        expected_path = (self.settings.runs_root / event_id / "comment.md").resolve()
-        path = Path(review["artifacts"]["comment"]).resolve()
         try:
+            expected_path = (self.settings.runs_root / event_id / "comment.md").resolve()
+            comment = review.get("artifacts", {}).get("comment")
+            if not isinstance(comment, str) or not comment:
+                raise ValueError("缺少评论草稿记录")
+            path = Path(comment).resolve()
             if path != expected_path or not path.is_relative_to(self.settings.runs_root.resolve()):
                 raise ValueError("评论路径不属于本轮")
             content = path.read_bytes()

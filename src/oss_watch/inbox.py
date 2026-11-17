@@ -30,9 +30,8 @@ class EventInbox:
                 "queued_files": [event["event_id"] + ".json" for event in events]}
 
     def events(self) -> list[dict]:
-        queue = self.store.load()["queue"]
-        # 保留旧版按 <event_id>.json 文件名排序的顺序。
-        return [queue[key] for key in sorted(queue, key=lambda key: key + ".json")]
+        # 投影按事实追加顺序插入队列，这里保持入队先后，不再按旧文件名排序。
+        return list(self.store.load()["queue"].values())
 
     def _archive(self, event: dict) -> None:
         with self.store.locked():

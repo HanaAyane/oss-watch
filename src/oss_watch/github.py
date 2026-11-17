@@ -81,6 +81,4 @@ class GitHubReader:
         encoded = quote(f"repo:{repo.github} {query}")
         data = self._call_path(f"search/issues?q={encoded}&per_page=10")
         items = [self._issue(item) for item in data.get("items", [])]
-        for item in items:
-            item["url"] = item["url"].replace("api.github.com/repos", "github.com").replace("/issues/", "/issues/")
         return {"query": query, "total_count": data.get("total_count", 0), "items": items}

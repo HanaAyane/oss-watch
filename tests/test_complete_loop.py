@@ -221,6 +221,25 @@ class CompleteLoopTests(unittest.TestCase):
                 self.sender().review(self.event["event_id"], "approve", "重复")
         self.assertEqual(len(calls), 2)
 
+    def test_legacy_review_without_comment_artifact_fails_closed(self):
+        # 模拟迁移来的旧轮次：真实审批已落库，但记录里没有评论产物键。
+        self.pending(fixture=False)
+        review = self.gate.review(self.event["event_id"], "approve", "旧记录")
+        artifacts = dict(review["artifacts"])
+        artifacts.pop("comment")
+        legacy = {**review, "artifacts": artifacts}
+        with patch("oss_watch.delivery.subprocess.run") as run:
+            result = CommentDelivery(replace(self.settings, send_comments=True), self.store).after_review(legacy)
+            self.assertIn("草稿校验失败", result["delivery_reason"])
+            run.assert_not_called()
+
+    def test_queue_order_follows_enqueue_facts_not_event_id(self):
+        for event_id in ("z-first", "a-second"):
+            event = copy.deepcopy(self.event)
+            event["event_id"] = event_id
+            self.inbox.enqueue(self.file(event))
+        self.assertEqual([event["event_id"] for event in self.inbox.events()], ["z-first", "a-second"])
+
     def test_changed_draft_is_not_sent(self):
         self.pending(fixture=False)
         pending = self.store.load()["pending_approval"]

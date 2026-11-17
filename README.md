@@ -26,7 +26,7 @@ python -m venv .venv
 
 ### 1. 本地收件箱：保存尚未处理的事件
 
-收件箱由 `enqueue` 命令、`src/oss_watch/inbox.py` 和状态目录下的 `oss-watch.sqlite` 组成。`enqueue` 通过 `events.py` 校验事件后，在一个 SQLite 事务中把原事件作为入队事实追加到数据库，不再写入 `inbox/<event_id>.json`。队列沿用旧版 `<event_id>.json` 名称的排序；一轮成功提交待拍板或识别为已处理后，追加归档事实并从当前队列移除，原事件与历史仍保留在库中。
+收件箱由 `enqueue` 命令、`src/oss_watch/inbox.py` 和状态目录下的 `oss-watch.sqlite` 组成。`enqueue` 通过 `events.py` 校验事件后，在一个 SQLite 事务中把原事件作为入队事实追加到数据库，不再写入 `inbox/<event_id>.json`。队列按入队先后排列；一轮成功提交待拍板或识别为已处理后，追加归档事实并从当前队列移除，原事件与历史仍保留在库中。
 
 每份事件都是 JSON 对象，用 `event_id` 标识事件，用 `repository` 指定 `config/watch.json` 中的白名单别名，`type` 决定正文对象；模拟事件显式带上布尔值 `fixture: true`。支持的正文如下，完整例子见 `fixtures/`：
 
@@ -58,8 +58,8 @@ MCP 由 `src/oss_watch/mcp_server.py` 注册工具，通过 `services.py` 组装
 
 | 工具 | 作用 | 关键限制 |
 | --- | --- | --- |
-| `read_repository_file` | 分段读取已配置仓库的 UTF-8 文本，返回带行号的内容。 | 路径必须留在白名单仓库内，拒绝绝对路径和链接逃逸；每次最多 400 行，大文件会被拒绝。 |
-| `search_repository` | 在指定仓库内做不区分大小写的定向文本检索，返回路径、行号和片段。 | 默认 `glob="*.ts"`、最多 30 条，可指定匹配范围，结果上限 100 条；跳过隐藏目录、依赖及 `lib`、`dist` 等构建产物。 |
+| `read_repository_file` | 分段读取已配置仓库的 UTF-8 文本，返回带行号的内容。 | 路径必须留在白名单仓库内，拒绝绝对路径和链接逃逸；隐藏文件（如 `.env`）及 `node_modules`、`lib`、`dist`、`build`、`coverage` 内的文件拒绝读取；每次最多 400 行，大文件会被拒绝。 |
+| `search_repository` | 在指定仓库内做不区分大小写的定向文本检索，返回路径、行号和片段。 | 默认 `glob="*.ts"`、最多 30 条，可指定匹配范围，结果上限 100 条；隐藏文件/目录、依赖及 `lib`、`dist`、`build`、`coverage` 等构建产物在扫描前剪枝，不参与检索。 |
 | `read_github_release` | 按标签读取已配置 GitHub 仓库的 Release，不传标签则读取 latest 接口。 | 当前实现始终需要 `OSS_WATCH_GITHUB=1` 和本机可用的 `gh`；不提供模拟发版快照回退，模拟发版正文已在本轮事件中。 |
 | `read_github_issue` | 读取指定编号的 Issue；本轮匹配的模拟 Issue 返回本地事件快照。 | 本地快照必须匹配当前活动事件的仓库、类型和编号；其他查询需要 `OSS_WATCH_GITHUB=1` 和本机 `gh`。 |
 | `read_github_pull_request` | 读取指定编号的 PR；本轮匹配的模拟 PR 返回本地事件快照。 | 与 Issue 相同，只对本轮匹配的模拟事件免联网；其他查询需要显式开启在线读取并使用本机 `gh`。 |
@@ -330,7 +330,7 @@ python demo.py status
 
 ### 25. 为什么事件已经入队却没有处理？
 
-先用同一状态目录运行 `status`：确认 `database` 和 `queued_events`，再看是否有阻塞轮次、等待器是否已经退出。队列沿用旧版 `<event_id>.json` 名称的排序，不按投递时间。无效 JSON 或事件正文会在 `enqueue` 时被拒绝，不会写进队列；只通过 `enqueue` 投递，不要手工改数据库或继续往旧 `inbox/` 写文件。首次迁移遇到旧文件损坏或同 ID 正文冲突，也会报错并保留全部旧数据，需要人工核对后重试。
+先用同一状态目录运行 `status`：确认 `database` 和 `queued_events`，再看是否有阻塞轮次、等待器是否已经退出。队列按入队先后排列，先投递的先处理。无效 JSON 或事件正文会在 `enqueue` 时被拒绝，不会写进队列；只通过 `enqueue` 投递，不要手工改数据库或继续往旧 `inbox/` 写文件。首次迁移遇到旧文件损坏或同 ID 正文冲突，也会报错并保留全部旧数据，需要人工核对后重试。
 
 ## 收件箱、状态与接续参考
 

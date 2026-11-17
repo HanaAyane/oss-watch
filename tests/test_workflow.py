@@ -138,6 +138,26 @@ class ToolTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             safe_event_id("../escape")
 
+    def test_hidden_files_and_excluded_dirs_are_not_readable_or_searchable(self) -> None:
+        # 隐藏文件可能含密钥；排除目录里放哨兵，验证读取拒绝且检索不下降。
+        (self.repo / ".env").write_text("SECRET=哨兵\n", encoding="utf-8")
+        (self.repo / "src" / ".secret.ts").write_text("哨兵\n", encoding="utf-8")
+        (self.repo / ".config").mkdir()
+        (self.repo / ".config" / "a.ts").write_text("哨兵\n", encoding="utf-8")
+        for name in ("node_modules", "lib", "dist", "build", "coverage"):
+            (self.repo / name).mkdir()
+            (self.repo / name / "a.ts").write_text("哨兵\n", encoding="utf-8")
+        reader = RepositoryReader(self.settings)
+        for path in (".env", "src/.secret.ts", ".config/a.ts", "node_modules/a.ts", "build/a.ts", "coverage/a.ts"):
+            with self.assertRaises(ValueError):
+                reader.read("target", path)
+        result = reader.search("target", "哨兵", glob="*.ts")
+        self.assertEqual(result["matches"], [])
+        self.assertFalse(result["truncated"])
+        self.assertEqual(reader.search("target", "哨兵", glob="*")["matches"], [])
+        # 哨兵文件纳入基线，tearDown 的「仓库未被写入」比对仍然成立。
+        self.before = {p.relative_to(self.repo): p.read_bytes() for p in self.repo.rglob("*") if p.is_file()}
+
     def test_github_is_opt_in(self) -> None:
         with self.assertRaises(PermissionError):
             GitHubReader(self.settings).release("target")
