@@ -22,7 +22,7 @@ python -m venv .venv
 
 ![oss-watch 架构图](assets/readme/oss-watch-architecture.gif)
 
-> 动图导自可交互架构图（Archify 查看器 Export → WebM 录制 6 秒动画，再经 ffmpeg 转 GIF）。交互版支持点节点看源码出处、聚焦上下游、导出 PNG/SVG，本机文件在 `.archify/architecture-oss-watch-20261117-155841/oss-watch.html`；该目录未入库，克隆仓库时以本 GIF 与 [docs/architecture.md](docs/architecture.md) 为准。
+> 动图导自[可交互架构图](.archify/architecture-oss-watch-20261117-155841/oss-watch.html)（Archify 查看器 Export → WebM 录制 6 秒动画，再经 ffmpeg 转 GIF）。交互版已随仓库分发，支持点节点看源码出处、聚焦上下游、导出 PNG/SVG/WebM；组件文字说明见 [docs/architecture.md](docs/architecture.md)。
 
 ## 文档导航
 

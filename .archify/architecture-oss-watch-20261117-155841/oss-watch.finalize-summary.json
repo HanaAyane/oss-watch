@@ -1,0 +1,280 @@
+{
+  "schemaVersion": 1,
+  "ok": true,
+  "command": "finalize",
+  "status": "pass",
+  "type": "architecture",
+  "quality": "showcase",
+  "specification": {
+    "path": "E:\\code\\oss-watch\\.archify\\architecture-oss-watch-20261117-155841\\candidate.json",
+    "sha256": "f9fee8fb3fca75294cd126bc46da0416c37aadd37ab11474942e5c166b39fbad",
+    "bytes": 14546
+  },
+  "artifact": {
+    "path": "E:\\code\\oss-watch\\.archify\\architecture-oss-watch-20261117-155841\\oss-watch.html",
+    "sha256": "7c73a13253c72892ad94ce98a601e5d9aad54c3a9d8bde400e2f6e0ac1678a91",
+    "bytes": 872095
+  },
+  "gates": {
+    "validate": "pass",
+    "deliver": "pass",
+    "check": "pass",
+    "browser-check": "pass"
+  },
+  "diagnostics": [],
+  "diagnosticSummary": {
+    "total": 0,
+    "shown": 0,
+    "truncated": false
+  },
+  "evidence": {
+    "receipt": "E:\\code\\oss-watch\\.archify\\architecture-oss-watch-20261117-155841\\review-26\\oss-watch.finalize.json",
+    "summaryReceipt": "E:\\code\\oss-watch\\.archify\\architecture-oss-watch-20261117-155841\\review-26\\oss-watch.finalize-summary.json",
+    "browserCheckReceipt": "E:\\code\\oss-watch\\.archify\\architecture-oss-watch-20261117-155841\\review-26\\oss-watch.browser-check.json"
+  },
+  "update": {
+    "status": "current",
+    "installedVersion": "3.2.0",
+    "availableVersion": "3.2.0",
+    "releaseNotes": null,
+    "checkedAt": "2026-11-17T07:59:52.978Z",
+    "source": "cache",
+    "noticeRequired": false,
+    "noticeText": null
+  },
+  "visualReview": "not-requested",
+  "durationMs": 3208,
+  "browserCheck": {
+    "requested": true,
+    "ran": true
+  },
+  "visualReviewRecommendation": {
+    "action": "inspect-route-readability",
+    "signals": {
+      "resolvedCrossovers": 7,
+      "routesOverSuggestedBends": 4,
+      "routesOverSuggestedStretch": 1
+    },
+    "reason": "Automated gates passed, but crossings or detours still need perceptual review before claiming visual quality.",
+    "affectedRoutes": {
+      "crossings": [
+        {
+          "left": {
+            "id": "mcp-facts",
+            "from": "mcp",
+            "to": "facts",
+            "label": "提交判断",
+            "collectionIndex": 5,
+            "artifactIndex": 6
+          },
+          "right": {
+            "id": "launcher-runs",
+            "from": "launcher",
+            "to": "runs",
+            "label": "输出·会话落盘",
+            "collectionIndex": 16,
+            "artifactIndex": 17
+          },
+          "point": [
+            920.0000000000001,
+            333.99999999999994
+          ]
+        },
+        {
+          "left": {
+            "id": "facts-human",
+            "from": "facts",
+            "to": "human",
+            "label": "review 只读审阅",
+            "collectionIndex": 6,
+            "artifactIndex": 7
+          },
+          "right": {
+            "id": "cli-delivery",
+            "from": "cli",
+            "to": "delivery",
+            "label": "approve 触发",
+            "collectionIndex": 9,
+            "artifactIndex": 10
+          },
+          "point": [
+            328,
+            173
+          ]
+        },
+        {
+          "left": {
+            "id": "facts-human",
+            "from": "facts",
+            "to": "human",
+            "label": "review 只读审阅",
+            "collectionIndex": 6,
+            "artifactIndex": 7
+          },
+          "right": {
+            "id": "watch-notify",
+            "from": "watch",
+            "to": "notify",
+            "label": "待拍板",
+            "collectionIndex": 12,
+            "artifactIndex": 13
+          },
+          "point": [
+            623,
+            173
+          ]
+        },
+        {
+          "left": {
+            "id": "facts-human",
+            "from": "facts",
+            "to": "human",
+            "label": "review 只读审阅",
+            "collectionIndex": 6,
+            "artifactIndex": 7
+          },
+          "right": {
+            "id": "mcp-github",
+            "from": "mcp",
+            "to": "github",
+            "label": "gh 只读查询（开关默认关）",
+            "collectionIndex": 15,
+            "artifactIndex": 16
+          },
+          "point": [
+            736,
+            283.4
+          ]
+        },
+        {
+          "left": {
+            "id": "facts-human",
+            "from": "facts",
+            "to": "human",
+            "label": "review 只读审阅",
+            "collectionIndex": 6,
+            "artifactIndex": 7
+          },
+          "right": {
+            "id": "cli-logs",
+            "from": "cli",
+            "to": "logs",
+            "label": "运行日志",
+            "collectionIndex": 17,
+            "artifactIndex": 18
+          },
+          "point": [
+            520,
+            173
+          ]
+        },
+        {
+          "left": {
+            "id": "watch-facts",
+            "from": "watch",
+            "to": "facts",
+            "label": "扫描队列",
+            "collectionIndex": 11,
+            "artifactIndex": 12
+          },
+          "right": {
+            "id": "mcp-github",
+            "from": "mcp",
+            "to": "github",
+            "label": "gh 只读查询（开关默认关）",
+            "collectionIndex": 15,
+            "artifactIndex": 16
+          },
+          "point": [
+            823,
+            280
+          ]
+        },
+        {
+          "left": {
+            "id": "mcp-github",
+            "from": "mcp",
+            "to": "github",
+            "label": "gh 只读查询（开关默认关）",
+            "collectionIndex": 15,
+            "artifactIndex": 16
+          },
+          "right": {
+            "id": "launcher-runs",
+            "from": "launcher",
+            "to": "runs",
+            "label": "输出·会话落盘",
+            "collectionIndex": 16,
+            "artifactIndex": 17
+          },
+          "point": [
+            920,
+            280
+          ]
+        }
+      ],
+      "detours": [
+        {
+          "relationship": {
+            "id": "human-cli",
+            "from": "human",
+            "to": "cli",
+            "label": "拍板",
+            "collectionIndex": 0,
+            "artifactIndex": 1
+          },
+          "bends": 4,
+          "stretch": 1.356
+        },
+        {
+          "relationship": {
+            "id": "facts-human",
+            "from": "facts",
+            "to": "human",
+            "label": "review 只读审阅",
+            "collectionIndex": 6,
+            "artifactIndex": 7
+          },
+          "bends": 4,
+          "stretch": 1.045
+        },
+        {
+          "relationship": {
+            "id": "mcp-repos",
+            "from": "mcp",
+            "to": "repos",
+            "label": "只读检索",
+            "collectionIndex": 14,
+            "artifactIndex": 15
+          },
+          "bends": 4,
+          "stretch": 1.262
+        },
+        {
+          "relationship": {
+            "id": "mcp-github",
+            "from": "mcp",
+            "to": "github",
+            "label": "gh 只读查询（开关默认关）",
+            "collectionIndex": 15,
+            "artifactIndex": 16
+          },
+          "bends": 3,
+          "stretch": 1
+        }
+      ],
+      "truncated": false
+    },
+    "hints": [
+      "mcp → facts crosses launcher → runs: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor.",
+      "facts → human crosses cli → delivery: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor.",
+      "facts → human crosses watch → notify: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor.",
+      "facts → human crosses mcp → github: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor.",
+      "facts → human crosses cli → logs: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor.",
+      "watch → facts crosses mcp → github: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor.",
+      "mcp → github crosses launcher → runs: move the node of whichever is a branch, return, or second entrance to the other side of the main path, so that relationship runs through an empty corridor.",
+      "human → cli needs 4 bends: move node human or cli so they share a row or column with matching centers, or sit diagonally with a clear corner."
+    ],
+    "repair": "Trace these relationships at the desktop viewport. For Architecture, use references/architecture-layout-repair.md: reflow a blocked main path or tangled connected scene, and repair an isolated defect locally only when the surrounding composition is accepted. Preserve all semantic content and user-fixed geometry. Rerun finalize once after the edit."
+  }
+}

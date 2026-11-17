@@ -1,0 +1,609 @@
+{
+  "schema_version": 1,
+  "diagram_type": "architecture",
+  "meta": {
+    "title": "oss-watch 本机开源值守架构",
+    "locale": "zh-CN",
+    "output": ".archify/architecture-oss-watch-20261117-155841/oss-watch.html",
+    "quality_profile": "showcase",
+    "repository": {
+      "url": "https://github.com/HanaAyane/oss-watch.git",
+      "provider": "github",
+      "revision": "f2be96f6bfa6e2f778620e68b0a3db766b3c2999"
+    }
+  },
+  "components": [
+    {
+      "id": "human",
+      "type": "external",
+      "label": "维护者（人）",
+      "sublabel": "review 审阅后拍板",
+      "pos": [
+        60,
+        60
+      ],
+      "size": [
+        130,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/cli.py",
+          "line": 39,
+          "end_line": 52,
+          "label": "review 与 approve/reject 子命令"
+        }
+      ]
+    },
+    {
+      "id": "github",
+      "type": "external",
+      "label": "GitHub 线上",
+      "sublabel": "只读查询 / 评论外发",
+      "pos": [
+        40,
+        520
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/github.py",
+          "line": 22,
+          "end_line": 34,
+          "label": "gh api 只读查询"
+        },
+        {
+          "path": "src/oss_watch/delivery.py",
+          "line": 77,
+          "end_line": 88,
+          "label": "唯一外发路径"
+        }
+      ]
+    },
+    {
+      "id": "poller",
+      "type": "backend",
+      "label": "poll 轮询器",
+      "sublabel": "按仓库频率拉取",
+      "tag": "失败退避",
+      "pos": [
+        270,
+        520
+      ],
+      "size": [
+        130,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/poller.py",
+          "line": 32,
+          "end_line": 72,
+          "label": "到期判定与失败退避"
+        },
+        {
+          "path": "src/oss_watch/poller.py",
+          "line": 84,
+          "end_line": 114,
+          "label": "确定性事件入队与水位"
+        }
+      ]
+    },
+    {
+      "id": "cli",
+      "type": "frontend",
+      "label": "CLI demo.py",
+      "sublabel": "enqueue·watch·approve",
+      "pos": [
+        270,
+        60
+      ],
+      "size": [
+        130,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/cli.py",
+          "line": 20,
+          "end_line": 53,
+          "label": "全部子命令注册"
+        },
+        {
+          "path": "src/oss_watch/cli.py",
+          "line": 86,
+          "end_line": 108,
+          "label": "watch/review/doctor/poll/拍板分派"
+        }
+      ]
+    },
+    {
+      "id": "watch",
+      "type": "backend",
+      "label": "watch 等待器",
+      "sublabel": "--loop 常驻·不代拍板",
+      "tag": ".watch.lock",
+      "pos": [
+        560,
+        60
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/inbox.py",
+          "line": 40,
+          "end_line": 84,
+          "label": "loop 等人工拍板，失败 needs-resume"
+        },
+        {
+          "path": "src/oss_watch/inbox.py",
+          "line": 86,
+          "end_line": 98,
+          "label": "待拍板通知按事件去重"
+        }
+      ]
+    },
+    {
+      "id": "launcher",
+      "type": "backend",
+      "label": "Pi 启动器",
+      "sublabel": "headless·超时看门狗",
+      "tag": ".pi.lock",
+      "pos": [
+        850,
+        60
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/pi_judgment.py",
+          "line": 142,
+          "end_line": 149,
+          "label": "工具白名单与发送开关强制 0"
+        },
+        {
+          "path": "src/oss_watch/pi_judgment.py",
+          "line": 166,
+          "end_line": 186,
+          "label": "headless 落盘与超时杀进程树"
+        }
+      ]
+    },
+    {
+      "id": "pi",
+      "type": "backend",
+      "label": "本机 Pi",
+      "sublabel": "pi -p --mode json",
+      "pos": [
+        1100,
+        60
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/pi_judgment.py",
+          "line": 138,
+          "end_line": 145,
+          "label": "只开放 mcp__oss_watch__*"
+        },
+        {
+          "path": ".pi/one-round.ts",
+          "line": 4,
+          "end_line": 14,
+          "label": "越界工具拦截，settled 即退出"
+        }
+      ]
+    },
+    {
+      "id": "delivery",
+      "type": "security",
+      "label": "评论发送门",
+      "sublabel": "approve 后唯一外发",
+      "tag": "默认关闭",
+      "pos": [
+        270,
+        250
+      ],
+      "size": [
+        130,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/delivery.py",
+          "line": 21,
+          "end_line": 59,
+          "label": "开关/真实事件/冻结草稿核验"
+        },
+        {
+          "path": "src/oss_watch/delivery.py",
+          "line": 70,
+          "end_line": 88,
+          "label": "先记尝试再发，不自动重发"
+        }
+      ]
+    },
+    {
+      "id": "notify",
+      "type": "backend",
+      "label": "toast 通知",
+      "sublabel": "EncodedCommand·降级响铃",
+      "pos": [
+        560,
+        250
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/notify.py",
+          "line": 26,
+          "end_line": 47,
+          "label": "toast 优先，失败降级响铃"
+        }
+      ]
+    },
+    {
+      "id": "mcp",
+      "type": "security",
+      "label": "MCP stdio 服务",
+      "sublabel": "12 工具·无发送能力",
+      "tag": "record_approval 隐藏",
+      "pos": [
+        1100,
+        250
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/mcp_server.py",
+          "line": 14,
+          "end_line": 81,
+          "label": "12 个工具注册，无发送工具"
+        },
+        {
+          "path": ".pi/mcp.json",
+          "line": 3,
+          "end_line": 10,
+          "label": "SEND=0，record_approval hidden"
+        }
+      ]
+    },
+    {
+      "id": "logs",
+      "type": "database",
+      "label": "运行日志",
+      "sublabel": "logs/oss-watch.log 滚动",
+      "pos": [
+        460,
+        420
+      ],
+      "size": [
+        120,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/logging_setup.py",
+          "line": 11,
+          "end_line": 26,
+          "label": "5MB×3 滚动，只记流程与标识"
+        }
+      ]
+    },
+    {
+      "id": "facts",
+      "type": "database",
+      "label": "SQLite 事实库",
+      "sublabel": "追加式·视图纯投影",
+      "tag": "WAL·禁改删",
+      "pos": [
+        760,
+        420
+      ],
+      "size": [
+        140,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/state.py",
+          "line": 62,
+          "end_line": 104,
+          "label": "首开建表后重试切 WAL，禁改删触发器"
+        },
+        {
+          "path": "src/oss_watch/state.py",
+          "line": 120,
+          "end_line": 168,
+          "label": "当前视图每次由事实纯投影"
+        }
+      ]
+    },
+    {
+      "id": "runs",
+      "type": "database",
+      "label": "runs 草稿产物",
+      "sublabel": "comment·patch·结论",
+      "pos": [
+        1090,
+        420
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/pi_judgment.py",
+          "line": 169,
+          "end_line": 176,
+          "label": "pi-output.jsonl 与会话落盘"
+        },
+        {
+          "path": "src/oss_watch/approval.py",
+          "line": 78,
+          "end_line": 83,
+          "label": "草稿写入本轮目录并记事实"
+        }
+      ]
+    },
+    {
+      "id": "repos",
+      "type": "external",
+      "label": "被值守仓库",
+      "sublabel": "白名单源码·永远只读",
+      "pos": [
+        1090,
+        620
+      ],
+      "size": [
+        150,
+        60
+      ],
+      "sources": [
+        {
+          "path": "src/oss_watch/repository.py",
+          "line": 28,
+          "end_line": 41,
+          "label": "只读围栏：剪枝隐藏与构建产物"
+        },
+        {
+          "path": "src/oss_watch/config.py",
+          "line": 128,
+          "end_line": 137,
+          "label": "拒绝绝对路径与链接逃逸"
+        }
+      ]
+    }
+  ],
+  "boundaries": [
+    {
+      "kind": "region",
+      "label": "var/ 状态目录 · 进程退出后仍可接续",
+      "wraps": [
+        "logs",
+        "facts",
+        "runs"
+      ]
+    },
+    {
+      "kind": "security-group",
+      "label": "单轮围栏 · 无发送工具",
+      "wraps": [
+        "pi",
+        "mcp"
+      ]
+    }
+  ],
+  "connections": [
+    {
+      "id": "human-cli",
+      "from": "human",
+      "to": "cli",
+      "label": "拍板",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "cli-watch",
+      "from": "cli",
+      "to": "watch",
+      "label": "watch --loop",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "watch-launcher",
+      "from": "watch",
+      "to": "launcher",
+      "label": "派一轮",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "launcher-pi",
+      "from": "launcher",
+      "to": "pi",
+      "label": "headless 拉起",
+      "variant": "emphasis",
+      "fromSide": "right",
+      "toSide": "left"
+    },
+    {
+      "id": "pi-mcp",
+      "from": "pi",
+      "to": "mcp",
+      "label": "stdio",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "mcp-facts",
+      "from": "mcp",
+      "to": "facts",
+      "label": "提交判断",
+      "variant": "emphasis",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "facts-human",
+      "from": "facts",
+      "to": "human",
+      "label": "review 只读审阅",
+      "variant": "emphasis",
+      "fromSide": "left",
+      "toSide": "left"
+    },
+    {
+      "id": "poller-github",
+      "from": "poller",
+      "to": "github",
+      "label": "gh api 只读",
+      "fromSide": "left",
+      "toSide": "right"
+    },
+    {
+      "id": "poller-facts",
+      "from": "poller",
+      "to": "facts",
+      "label": "幂等入队·水位事实",
+      "fromSide": "bottom",
+      "toSide": "bottom"
+    },
+    {
+      "id": "cli-delivery",
+      "from": "cli",
+      "to": "delivery",
+      "label": "approve 触发",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "delivery-github",
+      "from": "delivery",
+      "to": "github",
+      "label": "评论 POST",
+      "variant": "security",
+      "fromSide": "left",
+      "toSide": "top"
+    },
+    {
+      "id": "watch-facts",
+      "from": "watch",
+      "to": "facts",
+      "label": "扫描队列",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "watch-notify",
+      "from": "watch",
+      "to": "notify",
+      "label": "待拍板",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "mcp-runs",
+      "from": "mcp",
+      "to": "runs",
+      "label": "写草稿",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "mcp-repos",
+      "from": "mcp",
+      "to": "repos",
+      "label": "只读检索",
+      "variant": "security",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "mcp-github",
+      "from": "mcp",
+      "to": "github",
+      "label": "gh 只读查询（开关默认关）",
+      "variant": "dashed",
+      "fromSide": "left",
+      "toSide": "top"
+    },
+    {
+      "id": "launcher-runs",
+      "from": "launcher",
+      "to": "runs",
+      "label": "输出·会话落盘",
+      "fromSide": "bottom",
+      "toSide": "top"
+    },
+    {
+      "id": "cli-logs",
+      "from": "cli",
+      "to": "logs",
+      "label": "运行日志",
+      "variant": "dashed",
+      "fromSide": "bottom",
+      "toSide": "top"
+    }
+  ],
+  "cards": [
+    {
+      "dot": "cyan",
+      "title": "本次合并新增（P0–P4）",
+      "items": [
+        "状态改为 SQLite 追加式事实库：触发器禁改删，视图每次纯投影，旧 JSON 一次性导入",
+        "poll 轮询器：按仓库频率只读拉新事件，水位/退避落事实，首次启用不回溯存量",
+        "watch --loop 常驻：待拍板时通知并等人，拍板后自动接续；失败停 needs-resume 不重试",
+        "Pi 默认 headless：输出与会话落盘 runs/，超时按进程树终止，--resume-round 接续",
+        "toast 通知（Base64 EncodedCommand）与 logs/oss-watch.log 滚动日志",
+        "review 只读审阅视图与 doctor 锁诊断；state/.pi/.watch 三把文件锁防双开"
+      ]
+    },
+    {
+      "dot": "rose",
+      "title": "不变的硬边界",
+      "items": [
+        "被值守仓库永远只读；补丁无论是否批准都只留在本地草稿",
+        "MCP 没有发送工具；record_approval 对本轮 Pi 隐藏并被扩展拦截",
+        "发送只走人工 approve + OSS_WATCH_SEND_COMMENTS=1，默认关闭",
+        "fixture 模拟事件永不外发；发送失败不自动重试"
+      ]
+    },
+    {
+      "dot": "emerald",
+      "title": "可靠性语义",
+      "items": [
+        "三把文件锁带 PID 诊断；doctor 只报告不删锁",
+        "WAL 首开竞争带重试；写锁冲突等待 5 秒即报错不悬挂",
+        "发送先持久化尝试再发出；结果不明记 unknown，人工核对",
+        "通知失败静默降级响铃；旧代码页控制台不再崩溃"
+      ]
+    }
+  ]
+}

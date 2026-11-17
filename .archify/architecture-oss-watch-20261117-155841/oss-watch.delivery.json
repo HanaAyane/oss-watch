@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "receiptId": "47c22970-6c15-40cc-8059-cbc325610dc3",
+  "status": "current",
+  "command": "deliver",
+  "type": "architecture",
+  "input": "E:\\code\\oss-watch\\.archify\\architecture-oss-watch-20261117-155841\\candidate.json",
+  "output": "E:\\code\\oss-watch\\.archify\\architecture-oss-watch-20261117-155841\\oss-watch.html",
+  "specification": {
+    "sha256": "f9fee8fb3fca75294cd126bc46da0416c37aadd37ab11474942e5c166b39fbad",
+    "bytes": 14546
+  },
+  "artifact": {
+    "sha256": "7c73a13253c72892ad94ce98a601e5d9aad54c3a9d8bde400e2f6e0ac1678a91",
+    "bytes": 872095
+  }
+}
