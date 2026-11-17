@@ -16,6 +16,15 @@ def now_iso() -> str:
     return datetime.now().astimezone().isoformat(timespec="seconds")
 
 
+def lock_owner(lock: Path) -> dict | None:
+    """读取锁内诊断信息；旧版空锁或损坏内容返回 None。"""
+    try:
+        owner = json.loads(lock.read_text(encoding="utf-8"))
+        return owner if isinstance(owner, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
 def empty_state() -> dict:
     return {"schema_version": 1, "processed_events": {}, "last_conclusion": None,
             "pending_approval": None, "reviews": [], "queue": {}, "archived_events": {}, "events": {}}
@@ -34,8 +43,15 @@ class StateStore:
         try:
             descriptor = os.open(lock, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
         except FileExistsError as error:
-            raise ValueError(f"状态正在写入或本轮 Pi 正在运行；若进程异常终止，请确认进程已退出后移走 {lock}") from error
+            owner = lock_owner(lock)
+            detail = f"（持有者 {owner}）" if owner else ""
+            raise ValueError(f"状态正在写入或本轮 Pi 正在运行{detail}；可用 doctor 诊断，确认进程已退出后移走 {lock}") from error
         try:
+            # 锁内容仅供诊断；写失败不影响互斥语义。
+            try:
+                os.write(descriptor, json.dumps({"pid": os.getpid(), "started_at": now_iso()}).encode("utf-8"))
+            except OSError:
+                pass
             os.close(descriptor)
             yield
         finally:
@@ -105,6 +121,12 @@ class StateStore:
             elif kind == "judgment_started":
                 state["events"][event_id] = data["event"]
                 state["active_judgment"] = data
+            elif kind == "judgment_timed_out":
+                active = state.get("active_judgment")
+                if active is None or (active.get("event") or {}).get("event_id") != event_id:
+                    raise ValueError("超时事实必须对应当前活动轮次")
+                active["timeouts"] = active.get("timeouts", 0) + 1
+                active["last_timeout"] = data
             elif kind == "draft_recorded":
                 for record in (state.get("active_judgment"), state.get("pending_approval"),
                                state["processed_events"].get(event_id)):
@@ -248,6 +270,14 @@ class StateStore:
             if state.get("active_judgment") or state["pending_approval"] or event["event_id"] in state["processed_events"]:
                 raise ValueError("已有活动、待拍板或已处理轮次")
             self._append(connection, "judgment_started", active, event["event_id"])
+
+    def record_timeout(self, event_id: str, timeout_seconds: int) -> None:
+        with self._transaction() as (connection, state):
+            active = state.get("active_judgment")
+            if active is None or active["event"]["event_id"] != event_id:
+                raise ValueError("只能记录当前活动轮次的超时")
+            self._append(connection, "judgment_timed_out",
+                         {"timeout_seconds": timeout_seconds, "at": now_iso()}, event_id)
 
     def record_draft(self, event_id: str, artifacts: dict) -> None:
         with self._transaction() as (connection, state):

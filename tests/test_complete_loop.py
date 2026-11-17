@@ -45,7 +45,7 @@ class CompleteLoopTests(unittest.TestCase):
         path.write_text(json.dumps(event, ensure_ascii=False), encoding="utf-8-sig")
         return path
 
-    def complete(self, prepared=None):
+    def complete(self, prepared=None, **kwargs):
         event = self.store.load()["active_judgment"]["event"]
         event_id = event["event_id"]
         self.gate.draft_comment(event_id, "target", None, "中文回复草稿：请补充浏览器和视口。\n")
@@ -292,12 +292,13 @@ class CompleteLoopTests(unittest.TestCase):
         self.event["fixture"] = False
         prepared = self.pi.prepare(self.event)
         enabled = PiJudgment(replace(self.settings, github_enabled=True, send_comments=True))
+        process = SimpleNamespace(pid=1, wait=lambda timeout=None: 1)
         with patch("oss_watch.pi_judgment.shutil.which", return_value="pi.cmd"), \
-             patch("oss_watch.pi_judgment.subprocess.run", return_value=SimpleNamespace(returncode=1)) as run:
+             patch("oss_watch.pi_judgment.subprocess.Popen", return_value=process) as popen:
             with self.assertRaises(ValueError):
                 enabled.launch(prepared)
-            self.assertEqual(run.call_args.kwargs["env"]["OSS_WATCH_GITHUB"], "1")
-            self.assertEqual(run.call_args.kwargs["env"]["OSS_WATCH_SEND_COMMENTS"], "0")
+            self.assertEqual(popen.call_args.kwargs["env"]["OSS_WATCH_GITHUB"], "1")
+            self.assertEqual(popen.call_args.kwargs["env"]["OSS_WATCH_SEND_COMMENTS"], "0")
 
     def test_config_rejects_writable_targets_and_state_overlap(self):
         config = self.root / "config.json"

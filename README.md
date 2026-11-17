@@ -42,6 +42,8 @@ python -m venv .venv
 
 `python demo.py watch` 从 `demo.py` 进入 `src/oss_watch/cli.py`，由 `inbox.py` 的 `EventInbox.run()` 扫描 SQLite 中的当前队列，再交给 `pi_judgment.py` 准备原事件和提示词、启动 Pi。默认每秒扫描一次；空闲等待时不启动模型，也不访问 GitHub。`--once` 让空队列立即返回，不绕过审批门。
 
+**Pi 默认以 headless（`-p --mode json`）运行**：输出写入 `runs/<event_id>/pi-output.jsonl` 与 `pi-stderr.log`，会话存 `runs/<event_id>/session/`，超过 `judgment.timeout_seconds`（默认 900 秒，`watch.json` 可配 30–7200）会按进程树终止并留下超时事实，之后用 `pi --resume-round` 接续。想观察或接管一轮时加 `--interactive` 进入交互 TUI。判断是否完成只看事实库中的待拍板记录，不解析模型输出。
+
 每次运行最多派出一个新事件的模型轮次，完成后归档事件并退出；遇到已处理事件只归档，不再启动模型。若已有 `pending_approval` 或未完成的 `active_judgment`，等待器返回 `blocked` 并退出，后续事件留在队列。待拍板时先审批，未完成时先用 `pi --resume-round` 接续，再重新运行 `watch`。它是本机前台等待器，不是常驻中台，也没有内置公网 Webhook、定时拉取或自动重启服务。
 
 ### 3. 本机交互 Pi：读证据并提出本轮建议
@@ -151,7 +153,7 @@ var/readme-demo/oss-watch.sqlite
 
 ### 4. 观察终端 A：Pi 读取、判断、写草稿
 
-终端 A 会进入本机 Pi TUI，可以观察工具调用并与 Pi 交互。它通过项目 MCP 读取模拟 Issue `100001` 的**本地事件快照**，定向搜索白名单仓库的真实源码和本地历史，再提出中文建议。这里没有 `pi -p`、一次性后台子 agent 或自动审批。
+终端 A 默认以 headless 方式运行本机 Pi：过程输出写入本轮 `runs/<event_id>/pi-output.jsonl`，可以用 `Get-Content -Wait` 观察工具调用。想直接进入可交互的 TUI 观察并接管，改用 `python demo.py watch --interactive`。它通过项目 MCP 读取模拟 Issue `100001` 的**本地事件快照**，定向搜索白名单仓库的真实源码和本地历史，再提出中文建议。无论哪种方式都没有自动审批。
 
 **被值守仓库始终只读**。本轮只能把建议写进 oss-watch 的本地目录，不会修改 `E:\code\插件\dsh-reasoning-effort`，不会应用补丁、提交、推送或建立修复 PR。
 
@@ -310,7 +312,7 @@ python demo.py status
 
 ### 20. 碰到 state.lock、state.pi.lock、state.watch.lock 怎么办？
 
-它们分别是短暂状态写锁、Pi 进程租约和等待器租约，用来拒绝并发操作。先检查是否有相关 CLI、Pi 或 `watch` 正在运行；正常运行时不要动锁。若异常退出留下锁，确认对应进程已经退出，再人工移走当前状态目录中对应的锁文件，保留 `oss-watch.sqlite`、可能存在的 `-wal` / `-shm` 文件和产物，然后按状态接续或重新启动等待器。
+它们分别是短暂状态写锁、Pi 进程租约和等待器租约，用来拒绝并发操作。锁文件里记录了持有者 PID 与时间，先运行 `python demo.py doctor`：它会报告每个锁的持有进程是否存活，并给出建议，但**只诊断不删锁**。正常运行时不要动锁；确认对应进程已退出后，再人工移走锁文件，保留 `oss-watch.sqlite`、可能存在的 `-wal` / `-shm` 文件和产物，然后按状态接续或重新启动等待器。
 
 ### 21. 打开发送开关后，模拟事件或发版适配会不会发出去？
 

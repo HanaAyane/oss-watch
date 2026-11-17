@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 from .config import Settings, repository_path
+from .logging_setup import get_logger
 from .state import StateStore, now_iso
 from .events import DISCUSSIONS, validate_event
 
@@ -119,14 +120,14 @@ read_github_pull_request 读取本轮编号（模拟事件由工具返回本地�
             return {"status": "pending_approval", "event_id": event_id, "conclusion": conclusion,
                     "artifacts": artifacts, "delivery": "not-sent"}
 
-    def launch(self, prepared: dict[str, Any]) -> dict[str, Any]:
+    def launch(self, prepared: dict[str, Any], *, interactive: bool = False) -> dict[str, Any]:
         if prepared["status"] == "already_processed":
             return prepared
         # 单独的进程租约防止两个终端同时接续一轮；MCP 仍可短暂取得状态写锁。
         with self.store.locked(".pi.lock"):
-            return self._launch(prepared)
+            return self._launch(prepared, interactive=interactive)
 
-    def _launch(self, prepared: dict[str, Any]) -> dict[str, Any]:
+    def _launch(self, prepared: dict[str, Any], *, interactive: bool = False) -> dict[str, Any]:
         state = self.store.load()
         record = state["processed_events"].get(prepared["event_id"])
         if record is not None:
@@ -141,14 +142,54 @@ read_github_pull_request 读取本轮编号（模拟事件由工具返回本地�
         arguments = [executable, "--approve", "--no-extensions", "-e", "builtin:mcp",
                      "-e", str(root / ".pi" / "one-round.ts"), "--no-skills", "--no-prompt-templates",
                      "--no-context-files", "--tools", "mcp__oss_watch__*",
-                     "--exclude-tools", "mcp__oss_watch__record_approval", "@" + prepared["prompt"]]
+                     "--exclude-tools", "mcp__oss_watch__record_approval"]
         # Windows 的 npm .cmd 包装器只接收固定标志和项目生成的路径，不传入事件正文。
         event = active["event"]
         online = self.settings.github_enabled and event.get("fixture") is not True and event["type"] in DISCUSSIONS
         environment = dict(os.environ, OSS_WATCH_GITHUB="1" if online else "0", OSS_WATCH_SEND_COMMENTS="0")
-        completed = subprocess.run(arguments, cwd=root, env=environment, check=False)
+        logger = get_logger()
+        event_id = prepared["event_id"]
+        logger.info("启动 Pi 判断 event=%s mode=%s", event_id, "interactive" if interactive else "headless")
+        if interactive:
+            completed = subprocess.run(arguments + ["@" + prepared["prompt"]], cwd=root, env=environment, check=False)
+            outcome = f"returncode={completed.returncode}"
+        else:
+            outcome = self._run_headless(arguments, prepared, root, environment, event_id)
         state = self.store.load()
         pending = state.get("pending_approval")
-        if completed.returncode != 0 or pending is None or pending["event_id"] != prepared["event_id"]:
+        if pending is None or pending["event_id"] != event_id:
+            logger.warning("Pi 未完成提交 event=%s %s", event_id, outcome)
             raise ValueError("Pi 未完成本轮提交；产物已保留，可用 --resume-round 接续，未伪造判断或审批")
-        return {"status": "pending_approval", "event_id": prepared["event_id"], "artifacts": pending["artifacts"], "delivery": "not-sent"}
+        logger.info("判断已停在待拍板 event=%s %s", event_id, outcome)
+        return {"status": "pending_approval", "event_id": event_id, "artifacts": pending["artifacts"], "delivery": "not-sent"}
+
+    def _run_headless(self, arguments: list[str], prepared: dict[str, Any], root: Path,
+                      environment: dict[str, str], event_id: str) -> str:
+        """无人值守路径：输出落盘、超时杀进程树；成功与否只看事实库。"""
+        run_root = self.settings.runs_root / event_id
+        run_root.mkdir(parents=True, exist_ok=True)
+        session_dir = run_root / "session"
+        session_dir.mkdir(exist_ok=True)
+        command = arguments + ["-p", "--mode", "json", "--session-dir", str(session_dir), "@" + prepared["prompt"]]
+        timeout = self.settings.judgment_timeout_seconds
+        with (run_root / "pi-output.jsonl").open("a", encoding="utf-8") as out, \
+             (run_root / "pi-stderr.log").open("a", encoding="utf-8") as err:
+            process = subprocess.Popen(command, cwd=root, env=environment, stdout=out, stderr=err)
+            try:
+                returncode = process.wait(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                self._kill_tree(process)
+                process.wait()
+                self.store.record_timeout(event_id, timeout)
+                get_logger().warning("判断超时已终止 event=%s timeout=%ss", event_id, timeout)
+                raise ValueError(f"Pi 判断超过 {timeout} 秒已终止；产物已保留，可用 --resume-round 接续") from None
+        return f"returncode={returncode}"
+
+    @staticmethod
+    def _kill_tree(process: subprocess.Popen) -> None:
+        # Windows 下 terminate 只杀 .cmd 包装器，必须按树杀，避免遗留 node 子进程。
+        if os.name == "nt":
+            subprocess.run(["taskkill", "/T", "/F", "/PID", str(process.pid)],
+                           capture_output=True, check=False)
+        else:
+            process.kill()

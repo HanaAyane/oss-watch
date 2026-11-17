@@ -44,6 +44,7 @@ class Settings:
     github_enabled: bool
     delivery_mode: str
     send_comments: bool = False
+    judgment_timeout_seconds: int = 900
 
 
 def _text(value: Any, field: str) -> str:
@@ -79,6 +80,12 @@ def load_settings() -> Settings:
     delivery_mode = data.get("delivery", {}).get("mode", "draft-only")
     if delivery_mode != "draft-only":
         raise ValueError("第一期只支持 delivery.mode = draft-only")
+    judgment = data.get("judgment", {})
+    if not isinstance(judgment, dict):
+        raise ValueError("judgment 配置必须是对象")
+    timeout = judgment.get("timeout_seconds", 900)
+    if type(timeout) is not int or not 30 <= timeout <= 7200:
+        raise ValueError("judgment.timeout_seconds 必须是 30–7200 的整数秒")
     var_root = Path(os.environ.get("OSS_WATCH_VAR", PROJECT_ROOT / "var")).expanduser().resolve()
     if not var_root.is_relative_to(PROJECT_ROOT) or var_root == PROJECT_ROOT:
         raise ValueError("OSS_WATCH_VAR 必须是 oss-watch 项目内的子目录")
@@ -99,6 +106,7 @@ def load_settings() -> Settings:
         github_enabled=os.environ.get("OSS_WATCH_GITHUB", "0") == "1",
         delivery_mode=delivery_mode,
         send_comments=os.environ.get("OSS_WATCH_SEND_COMMENTS", "0") == "1",
+        judgment_timeout_seconds=timeout,
     )
 
 

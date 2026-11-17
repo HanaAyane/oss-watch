@@ -57,6 +57,12 @@ class WorkflowTests(unittest.TestCase):
 
     def tearDown(self) -> None:
         self.env.stop()
+        # 关闭指向临时目录的日志句柄，否则 Windows 上无法清理。
+        import logging
+        logger = logging.getLogger("oss_watch")
+        for handler in logger.handlers[:]:
+            handler.close()
+            logger.removeHandler(handler)
         self.temp.cleanup()
 
     def test_real_source_produces_pending_review_and_drafts(self) -> None:

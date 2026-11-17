@@ -37,7 +37,7 @@ class EventInbox:
         with self.store.locked():
             self.store.archive(event)
 
-    def run(self, *, once: bool = False, interval: float = 1.0) -> dict:
+    def run(self, *, once: bool = False, interval: float = 1.0, interactive: bool = False) -> dict:
         if not 0.1 <= interval <= 60:
             raise ValueError("扫描间隔必须在 0.1 到 60 秒之间")
         with self.store.locked(".watch.lock"):
@@ -60,6 +60,6 @@ class EventInbox:
                 if prepared["status"] == "already_processed":
                     self._archive(event)
                     continue
-                result = self.pi.launch(prepared)
+                result = self.pi.launch(prepared, interactive=interactive)
                 self._archive(event)
                 return {**result, **self.inspect(), "message": "一轮已停在审批门；等待器退出，其他事件留在收件箱。"}
