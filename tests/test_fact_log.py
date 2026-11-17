@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import threading
+import time
 import unittest
 from dataclasses import replace
 from contextlib import closing
@@ -144,16 +145,42 @@ class FactLogTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 self.migrated_store().load()
 
-    def test_database_lock_conflict_is_immediate_and_does_not_append(self):
+    def test_database_lock_conflict_times_out_and_does_not_append(self):
         self.store.load()
         before = self.store.facts()
-        with closing(sqlite3.connect(self.store.path, isolation_level=None)) as connection:
+        # 替身把等待窗口缩到 0.05s：验证「他进程持写锁→等待超时报错且不追加」语义，
+        # 不让测试真等满 5 秒。先留原函数引用，patch 的是共享模块属性，lambda 里不能再调名字。
+        real_connect = sqlite3.connect
+        with patch("oss_watch.state.sqlite3.connect", side_effect=lambda *a, **k: real_connect(*a, **{**k, "timeout": 0.05})), \
+             closing(real_connect(self.store.path, isolation_level=None)) as connection:
             connection.execute("BEGIN IMMEDIATE")
             with self.assertRaisesRegex(ValueError, "锁冲突"):
                 self.store.enqueue(self.event)
             connection.rollback()
         self.assertEqual(self.store.facts(), before)
         self.store.enqueue(self.event)
+
+    def test_wal_switch_retries_while_concurrent_reader_holds_lock(self):
+        # 切 WAL 需要独占锁且不受 busy timeout 保护：另一连接持读事务时 PRAGMA 直接
+        # 抛锁错误，CI 慢盘上并发首开必现。必须让位重试，而不是把首开判成锁冲突。
+        path = self.root / "wal-race" / "oss-watch.sqlite"
+        store = StateStore(path, self.settings)
+        store.load()
+        real_sleep = time.sleep
+        with closing(sqlite3.connect(path, isolation_level=None)) as reader:
+            reader.execute("PRAGMA journal_mode=DELETE")
+            reader.execute("BEGIN")
+            reader.execute("SELECT count(*) FROM facts").fetchone()
+            # 替身 sleep 扮演读方：第一次让位时释放读事务，保证重试路径被真实走到。
+            def yield_lock(seconds):
+                reader.rollback()
+                real_sleep(seconds)
+            with patch("oss_watch.state.time.sleep", side_effect=yield_lock) as slept:
+                state = store.load()
+            self.assertTrue(slept.called)
+            self.assertEqual(state["schema_version"], 1)
+        with closing(sqlite3.connect(path)) as check:
+            self.assertEqual(check.execute("PRAGMA journal_mode").fetchone()[0], "wal")
 
     def test_failed_multi_fact_transaction_has_no_partial_commit(self):
         self.store.load()
@@ -242,10 +269,13 @@ class FactLogTests(unittest.TestCase):
         state = project / "isolated"
         state.mkdir(parents=True)
         original_resolve = Path.resolve
+        # 键用 resolve 后的形态：CI 的 TEMP 是 8.3 短路径，生产代码先解析 var_root
+        # 再拼文件名，未解析的键会失配导致 mock 落空。先算好，patch 内不能再调 resolve。
+        resolved_state = state.resolve()
         for filename in ("oss-watch.sqlite", "oss-watch.sqlite-wal", "oss-watch.sqlite-shm"):
             def resolve(path, *args, **kwargs):
                 # Windows 无创建链接权限时也能覆盖解析后越界的分支。
-                if path == state / filename:
+                if path == resolved_state / filename:
                     return self.root / (filename + "-outside")
                 return original_resolve(path, *args, **kwargs)
             with patch("oss_watch.config.PROJECT_ROOT", project), \
