@@ -6,6 +6,8 @@
 
 **所有被值守仓库始终只读**，包括 `dsh-reasoning-effort` 和以后加入 `config/watch.json` 的任何项目。禁止改文件、应用补丁、提交、推送、创建修复分支或修复 PR；**版本补丁即使批准，也永远只留在 oss-watch 本地草稿中**。人工批准真实 Issue/PR 的评论后，只有显式开启发送开关并有本机凭据，才会发送一条讨论区评论。默认不发送，不自动合并。
 
+状态存在 `var/` 下的 SQLite 追加式事实库里（WAL、触发器禁改删，当前视图由事实纯投影），进程退出或断电后仍可接续；`watch`、Pi、状态写入各有一把文件锁防止双开，`doctor` 可诊断锁持有进程。
+
 ## 安装
 
 要求 Python 3.11+、本机 Pi（已在 1.5.2 验证）和可用的模型配置。默认只读目标为 `E:\code\插件\dsh-reasoning-effort`，可在 `config/watch.json` 配置其他白名单仓库；`writable: true` 会被拒绝。模型与 GitHub 登录由用户在本机管理，不要将密钥、Token 或登录资料放入仓库。
@@ -20,6 +22,8 @@ python -m venv .venv
 
 ![oss-watch 架构图](assets/readme/oss-watch-architecture.gif)
 
+> 动图导自可交互架构图（Archify 查看器 Export → WebM 录制 6 秒动画，再经 ffmpeg 转 GIF）。交互版支持点节点看源码出处、聚焦上下游、导出 PNG/SVG，本机文件在 `.archify/architecture-oss-watch-20261117-155841/oss-watch.html`；该目录未入库，克隆仓库时以本 GIF 与 [docs/architecture.md](docs/architecture.md) 为准。
+
 ## 文档导航
 
 整条链路是「poll 轮询 / enqueue 投递 → 本地收件箱 → watch 等待器（可 `--loop` 常驻）→ 本机 headless Pi → MCP 读证据、写草稿 → 本地状态 → toast 通知 → 人工审批（review / approve / reject）→ 可选评论发送」。被值守仓库只提供源码和文档，GitHub 只读查询只补充线上信息；两者都不是补丁的写入目标。
@@ -30,9 +34,10 @@ python -m venv .venv
 | 部署两条任务计划、备份恢复、锁/轮询/通知排障 | [docs/operations.md](docs/operations.md) |
 | 25 条常见问题（持久化、审批语义、开关区别等） | [docs/faq.md](docs/faq.md) |
 | 状态与接续、批准后可选发评论、Pi/MCP 入口细节 | [docs/reference.md](docs/reference.md) |
-| 各阶段验收记录（实际命令与输出） | [docs/complete-loop-verification.md](docs/complete-loop-verification.md)、[docs/p3-daemon-review-verification.md](docs/p3-daemon-review-verification.md) |
+| P0–P4 生产化路线（现状盘点、每阶段验收基线） | [docs/roadmap-to-production.md](docs/roadmap-to-production.md) |
+| 各阶段验收记录（实际命令与输出） | [docs/complete-loop-verification.md](docs/complete-loop-verification.md)、[docs/p3-daemon-review-verification.md](docs/p3-daemon-review-verification.md)、[docs/p4-engineering-verification.md](docs/p4-engineering-verification.md) |
 
-日常命令一览：`enqueue` 投递、`watch [--loop]` 判断、`poll` 轮询、`review` 审阅、`approve`/`reject` 拍板、`status` 原始 JSON、`doctor` 锁诊断。全部命令用 `python demo.py <命令>` 执行。
+日常命令一览：`enqueue` 投递、`watch [--loop]` 判断、`poll` 轮询（`--loop` 可替代任务计划心跳）、`review` 审阅（`--event` 可回看历史事件）、`approve`/`reject` 拍板、`status` 原始 JSON、`doctor` 锁诊断、`pi --resume-round` 接续未完成的一轮。全部命令用 `python demo.py <命令>` 执行。
 
 ## 一次完整演示
 
@@ -199,6 +204,6 @@ node tests/pi_smoke.mjs $piPackage
 
 单元测试与 MCP 冒烟默认使用 `fixtures/target-repo/` 随仓库分发的目标源码副本，**clone 即可全量运行**，不依赖真实被值守仓库、不联网、不调用模型；要针对真实仓库跑，显式设 `OSS_WATCH_TEST_REAL_REPO=1`（仍只读）。GitHub Actions 在 windows-latest 上跑同一套 unittest + compileall + mcp_smoke（`.github/workflows/ci.yml`）。
 
-测试覆盖规则回归、Issue/PR 快照与证据提交、草稿冻结、队列事实唤醒、排队阻塞、异常接续、去重及冲突、并发租约、先审批后发送、开关/凭据缺失、模拟与版本适配禁止发送、正文篡改、发送不确定时不重试，事实查询与重建、只追加约束、旧状态/队列/归档迁移、冲突回滚和数据库锁冲突，以及 headless 启动参数与超时接续、锁持有者诊断、按仓库频率的到期/退避/幂等轮询、loop 拍板后自动接续与失败即停、通知去重与降级、review 只读渲染。闭环与事实日志测试逐项检查目标副本内容未变化。发送测试用替身，不向真实讨论区发评论。
+测试覆盖规则回归、Issue/PR 快照与证据提交、草稿冻结、队列事实唤醒、排队阻塞、异常接续、去重及冲突、并发租约、先审批后发送、开关/凭据缺失、模拟与版本适配禁止发送、正文篡改、发送不确定时不重试，事实查询与重建、只追加约束、旧状态/队列/归档迁移、冲突回滚和数据库锁冲突（含 WAL 首开并发竞争重试），以及 headless 启动参数与超时接续、锁持有者诊断、按仓库频率的到期/退避/幂等轮询、loop 拍板后自动接续与失败即停、通知去重与降级、review 只读渲染。闭环与事实日志测试逐项检查目标副本内容未变化。发送测试用替身，不向真实讨论区发评论。
 
 MCP 冒烟真实启动 stdio，在隔离状态目录调用工具并走到本地审批；Pi SDK 探针验证项目配置、工具限制和退出扩展，不调用模型、不改全局配置。它们与单元测试**不等于真实模型判断验收**。完整交互验收请在本机终端按「一次完整演示」执行，观察 Pi 的真实读取、草稿和 `pending_approval`，再人工核对结论；各阶段实际验收记录见 `docs/*-verification.md`。运行产物、草稿与状态都在忽略的 `var/` 中。
